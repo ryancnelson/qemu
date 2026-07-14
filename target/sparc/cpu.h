@@ -92,6 +92,11 @@ enum {
 #define TT_TMISS    0x64
 #define TT_DMISS    0x68
 #define TT_DPROT    0x6c
+#if 1 /* BUG fix sun4v */
+#define TT_CPU_MONDO 0x7c
+#define TT_DEV_MONDO 0x7d
+#define TT_RESUMABLE_ERROR 0x7e
+#endif
 #define TT_SPILL    0x80
 #define TT_FILL     0xc0
 #define TT_WOTHER   (1 << 5)
@@ -271,6 +276,9 @@ enum {
 #define TTE_VALID_BIT       (1ULL << 63)
 #define TTE_NFO_BIT         (1ULL << 60)
 #define TTE_IE_BIT          (1ULL << 59)
+#if 1 /* BUG */
+#define TTE_PGSIZE2         (1ULL << 48)
+#endif
 #define TTE_USED_BIT        (1ULL << 41)
 #define TTE_LOCKED_BIT      (1ULL <<  6)
 #define TTE_SIDEEFFECT_BIT  (1ULL <<  3)
@@ -307,7 +315,11 @@ enum {
 #define TTE_SET_USED(tte)   ((tte) |= TTE_USED_BIT)
 #define TTE_SET_UNUSED(tte) ((tte) &= ~TTE_USED_BIT)
 
+#if 1 /* BUG fix sun4v */
+#define TTE_PGSIZE(tte)     ((((tte) >> 61) & 3ULL) | (((tte) >> 46) & 0x4ULL))
+#else
 #define TTE_PGSIZE(tte)     (((tte) >> 61) & 3ULL)
+#endif
 #define TTE_PGSIZE_UA2005(tte)     ((tte) & 7ULL)
 #define TTE_PA(tte)         ((tte) & 0x1ffffffe000ULL)
 
@@ -548,6 +560,28 @@ struct CPUArchState {
     DeviceState *irq_manager;
     void (*qemu_irq_ack)(CPUSPARCState *env, int intno);
     uint32_t cache_control;
+#if 1 /* BUG fix sun4v  nop in qemu-10 */
+    uint64_t	pcr;					/* asr16 */
+#define	PCR_imp0_MASK	0xffffULL
+#define	PCR_imp0_SHIFT	(32)
+#define	PCR_imp1_MASK	0x3ffULL
+#define	PCR_imp1_SHIFT	(17)
+#define	PCR_SU_MASK	0x3fULL
+#define	PCR_SU_SHIFT	(11)
+#define	PCR_SL_MASK	0x3fULL
+#define	PCR_SL_SHIFT	(4)
+#define	PCR_imp2	(1ULL << 3)
+#define	PCR_UT		(1ULL << 2)
+#define	PCR_ST		(1ULL << 1)
+#define	PCR_PRIV	(1ULL << 0)
+    uint64_t	pic;					/* asr17 */
+#define	PIC_PICU	0xffffffffULL
+#define	PIC_PICU_SHIFT	32
+#define	PIC_PICL	0xffffffffULL
+#endif
+#if 1 /* BUG fix sun4v */
+	uint64_t	int_queue[8];
+#endif /* BUG */
 };
 
 /**

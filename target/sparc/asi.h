@@ -242,6 +242,11 @@
 #define ASI_BLK_AIUP		0x70 /* Primary, user, block load/store	*/
 #define ASI_BLK_AIUS		0x71 /* Secondary, user, block ld/st	*/
 #define ASI_MCU_CTRL_REG	0x72 /* (III) Memory controller regs	*/
+#if 1 /* BUG fix sun4v */
+#define ASI_SWVR_INTR_RECEIVE	0x72 /* (4V) Interrupt Receive	*/
+#define ASI_SWVR_UDB_INTR_W	0x73 /* (4V) Interrupt vector dispatch */
+#define ASI_SWVR_UDB_INTR_R	0x74 /* (4V) Incoming vector		*/
+#endif
 #define ASI_EC_DATA		0x74 /* (III) E-cache data staging reg	*/
 #define ASI_EC_CTRL		0x75 /* (III) E-cache control reg	*/
 #define ASI_EC_W		0x76 /* E-cache diag write access	*/

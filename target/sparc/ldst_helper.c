@@ -218,6 +218,9 @@ static uint64_t sun4v_tte_to_sun4u(CPUSPARCState *env, uint64_t tag,
     }
     sun4u_tte = TTE_PA(sun4v_tte) | (sun4v_tte & TTE_VALID_BIT);
     sun4u_tte |= (sun4v_tte & 3ULL) << 61; /* TTE_PGSIZE */
+#if 1 /* BUG fix sun4v */
+    sun4u_tte |= (sun4v_tte & 4ULL) << 46; /* TTE_PGSIZE2 */
+#endif
     sun4u_tte |= CONVERT_BIT(sun4v_tte, TTE_NFO_BIT_UA2005, TTE_NFO_BIT);
     sun4u_tte |= CONVERT_BIT(sun4v_tte, TTE_USED_BIT_UA2005, TTE_USED_BIT);
     sun4u_tte |= CONVERT_BIT(sun4v_tte, TTE_W_OK_BIT_UA2005, TTE_W_OK_BIT);
@@ -1549,6 +1552,44 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
             }
             break;
         }
+#if 1 /* BUG fix sun4v */
+    case ASI_SWVR_INTR_RECEIVE:	/* 0x72 */
+	ret = env->ivec_status;
+	break;
+#endif
+#if 1 /* BUG fix sun4v */
+    case ASI_SWVR_UDB_INTR_R: /* Incoming Vector, RO 0x74 */
+        {
+	    int	i;
+
+	    /* find the highest priority vector */
+	    ret = 0;	/* no interrupt right ? */
+	    i = 63;
+#if 0
+{
+	    int64_t msb_mask;
+
+	    msb_mask = 0xffffffff00000000ULL;
+	    mask_shift = 32;
+	    while ((env->ivec_status & msb_mask) == 0 && (~msb_mask != 0)) {
+		i -= mask_shift;
+
+		mask_shift >>= 1;
+		msb_mask >>= mask_shift;
+	    }
+}
+#endif
+	    for (; i>= 0; i--) {
+		if (env->ivec_status & (1ULL << i)) {
+		        /* clear the found bit */
+		        env->ivec_status &= ~(1ULL << i);
+		        ret = i;	
+			break;
+		}
+	    }
+            break;
+        }
+#endif
     case ASI_SCRATCHPAD: /* UA2005 privileged scratchpad */
         if (unlikely((addr >= 0x20) && (addr < 0x30))) {
             /* Hyperprivileged access only */
@@ -1807,6 +1848,24 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
     case ASI_IMMU_DEMAP: /* I-MMU demap */
         demap_tlb(env->itlb, addr, "immu", env);
         return;
+#if 1 /* BUG fix sun4v */
+    case ASI_SWVR_UDB_INTR_W: /* Incoming Vector, RO 0x73 */
+        {
+	    uint32_t	target;
+	    uint64_t	ivec;
+	    CPUSPARCState *target_env;
+
+	    target = (val >> 8) & 0xff;	/* current 0x1f */
+	    target_env = &SPARC_CPU(qemu_get_cpu(target))->env;
+	    ivec = 1ULL << (val & 0x3f);
+
+	    /* should be atomic */
+	    target_env->ivec_status |= ivec;
+
+	    /* XXX - how can I notify trap to other cpu? */
+            break;
+        }
+#endif
     case ASI_DMMU: /* D-MMU regs */
         {
             int reg = (addr >> 3) & 0xf;
@@ -1926,6 +1985,55 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
         }
         return;
     case ASI_QUEUE: /* UA2005 CPU mondo queue */
+#if 1 /* BUG fix sun4v */
+{
+	int	tt;
+	int	ix;
+
+	switch (addr) {
+	case 0x3c0:
+	case 0x3c8:
+	    tt = TT_CPU_MONDO;
+	    break;
+
+	case 0x3d0:
+	case 0x3d8:
+	    tt = TT_DEV_MONDO;
+	    break;
+
+	case 0x3e0:
+	case 0x3e8:
+	    tt = TT_RESUMABLE_ERROR;
+	    break;
+
+	case 0x3f0:
+	case 0x3f8:
+	    tt = 0;
+	    break;
+
+	default:
+	    /* illegal */
+            sparc_raise_mmu_fault(cs, addr, true, false, 1, size, GETPC());
+	    return;
+	}
+	ix = (addr - 0x3c0) / 8;
+	env->int_queue[ix] = val;
+
+	if (tt) {
+		int	head, tail;
+
+		head = (env->int_queue[ix & ~1] >> 6) & 0xff;
+		tail = (env->int_queue[ix | 1]  >> 6) & 0xff;
+		if (head != tail) {
+		    /* raise trap */
+#if 0 /* BUG fix sun4v */
+		    cpu_raise_exception_ra(env, tt, GETPC());
+#endif
+		}
+	}
+        return;
+}
+#endif
     case ASI_DCACHE_DATA: /* D-cache data */
     case ASI_DCACHE_TAG: /* D-cache tag access */
     case ASI_ESTATE_ERROR_EN: /* E-cache error enable */

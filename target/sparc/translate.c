@@ -2892,6 +2892,25 @@ static TCGv do_rdy(DisasContext *dc, TCGv dst)
 TRANS(RDY_v7, 32, do_rd_special, true, a->rd, do_rdy)
 TRANS(RDY_v9, 64, do_rd_special, true, a->rd, do_rdy)
 
+#ifdef TARGET_SPARC64
+/* performace registers */
+static TCGv do_rd_pcr(DisasContext *dc, TCGv dst)
+{
+    tcg_gen_ld_tl(dst, tcg_env, env64_field_offsetof(pcr));
+    return dst;
+}
+
+TRANS(RDPCR, 64, do_rd_special, true, a->rd, do_rd_pcr)
+
+#if 0
+static TCGv do_rd_pic(DisasContext *dc, TCGv dst)
+{
+    tcg_gen_ld_tl(dst, tcg_env, env64_field_offsetof(pic));
+    return dst;
+}
+TRANS(RDPIC, 64, do_rd_special, true, a->rd, do_rd_pic)
+#endif
+#endif /* TARGET_SPARC64 */
 static TCGv do_rd_leon3_config(DisasContext *dc, TCGv dst)
 {
     gen_helper_rdasr17(dst, tcg_env);

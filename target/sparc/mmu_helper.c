@@ -812,6 +812,11 @@ void dump_mmu(CPUSPARCState *env)
             case 0x3:
                 mask = "  4M";
                 break;
+#if 1 /* BUG */
+	    case 0x5:
+		mask = "256M";
+		break;
+#endif
             }
             if (TTE_IS_VALID(env->dtlb[i].tte)) {
                 qemu_printf("[%02u] VA: %" PRIx64 ", PA: %llx"
@@ -851,6 +856,11 @@ void dump_mmu(CPUSPARCState *env)
             case 0x3:
                 mask = "  4M";
                 break;
+#if 1 /* BUG */
+	    case 0x5:
+		mask = "256M";
+		break;
+#endif
             }
             if (TTE_IS_VALID(env->itlb[i].tte)) {
                 qemu_printf("[%02u] VA: %" PRIx64 ", PA: %llx"

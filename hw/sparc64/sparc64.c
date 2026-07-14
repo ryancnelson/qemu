@@ -128,6 +128,11 @@ static void main_cpu_reset(void *opaque)
         env->pc = s->prom_addr + 0x40ULL;
     }
     env->npc = env->pc + 4;
+#if 1
+    if (CPU(s->cpu)->cpu_index != 0) {
+        CPU(s->cpu)->halted = 1;
+    }
+#endif
 }
 
 static void tick_irq(void *opaque)
