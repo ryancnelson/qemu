@@ -3,7 +3,7 @@
 #define  NEW_VDISK
 //#define  NEW_VDISK_LARGE
 //#define  NEW_VDISK_MMAP
-//#define NEW_VDISK_BLKDEV
+#define NEW_VDISK_BLKDEV
 //#define NEW_VDISK_BLKDEV_AIO
 //#define NEW_VDISK_BLKDEV_ACCT
 //#define	MAX_VDISK_BITS	32

@@ -282,6 +282,21 @@ niagara_load_vdisk(NiagaraBoardState *s, long vdisk_base)
 			    qemu_ram_get_host_addr(dp->be.map.ram_block);
 #elif defined(NEW_VDISK_BLKDEV)
 			dp->be.bb = blk;
+{
+			Error	*error_abort = NULL;
+			int	ret;
+
+			ret = blk_set_perm(dp->be.bb,
+			    bdrv_is_read_only(blk_bs(blk))
+			      ? BLK_PERM_CONSISTENT_READ
+			      : BLK_PERM_CONSISTENT_READ | BLK_PERM_WRITE,
+			    BLK_PERM_ALL,
+			    &error_abort);
+			if (ret < 0) {
+				error_report("%s: blk_set_perm failed\n", __func__);
+				return;
+			}
+}
 #else
 			dp->be.fd = open(blk_bs(blk)->filename,
 			    bdrv_is_read_only(blk_bs(blk)) ? O_RDONLY : O_RDWR);

@@ -34,12 +34,6 @@
 #include "trace.h"
 #include "qemu/plugin.h"
 
-#ifdef NEW_VDISK
-//#define       SUPPORT_ASYNC
-//#define SUPPORT_IOV
-#define USE_BLK_DRAIN
-#endif
-
 #define DEBUG_PCALL
 
 #ifdef DEBUG_PCALL
@@ -115,6 +109,13 @@ static const char *const legion_trap_names[NUM_LEGION_TRAPS] = {
 #  include "block/block-common.h"
 #  include "exec/translation-block.h"
 #endif
+
+#ifdef notdef
+#endif
+#define SUPPORT_IOV
+#define	SUPPORT_ASYNC
+#define ALWAYS_ASYNC
+
 #define DEBUG_PABCOPY
 static bool
 sparc_legion_trap(CPUState *cs)
@@ -337,14 +338,7 @@ sparc_vdisk_trap(CPUState *cs)
         }
         du->status |= D_BUSY;
 
-        if (cmd == HSIMD_CMD_IOV || cmd == HSIMD_CMD_IOV_ASYNC) {
-	    goto do_iov;
-	}
-#if 0
-    	goto do_io;
-#else
 	goto do_iov;
-#endif
     }
     
     if (env->regwptr[5] == DISK_READ) {
@@ -541,13 +535,13 @@ workaround:
     memory_region_unref(iov_mrs.mr);
     iov_mrs.mr = NULL;
 
+#ifndef ALWAYS_ASYNC
     if (cmd == HSIMD_CMD_IOV_ASYNC ||
         cmd == HSIMD_CMD_DATAIO_ASYNC) {
+#endif
 	/* free resource on aio done */
 	du->status |= D_ASYNC;
-    }
-    if (cmd == HSIMD_CMD_IOV_ASYNC ||
-        cmd == HSIMD_CMD_DATAIO_ASYNC) {
+
         if (env->regwptr[5] == DISK_READ) {
             du->aiocb = blk_aio_preadv(dp->be.bb,
     	        offset - dp->offset, &du->qiov, 0, vdisk_rw_done_cb, (void *)dp);
@@ -555,6 +549,7 @@ workaround:
             du->aiocb = blk_aio_pwritev(dp->be.bb,
     	        offset - dp->offset, &du->qiov, 0, vdisk_rw_done_cb, (void *)dp);
         }
+#ifndef ALWAYS_ASYNC
     } else {
         if (env->regwptr[5] == DISK_READ) {
             blk_preadv(dp->be.bb, offset - dp->offset, size, &du->qiov, 0);
@@ -562,13 +557,14 @@ workaround:
             blk_pwritev(dp->be.bb, offset - dp->offset, size, &du->qiov, 0);
 	}
     }
-
+#endif
     if (cmd == HSIMD_CMD_IOV_ASYNC ||
         cmd == HSIMD_CMD_DATAIO_ASYNC) {
+	/* XXX: should we release aio context? */
 	if (du->aiocb) {
 	    /* success */
 	    env->regwptr[0] = 0;
-	    env->regwptr[1] = 0;
+	    env->regwptr[1] = size;
 	    return (TRUE);
 	}
 	/* failed to issue aio request */
@@ -580,18 +576,18 @@ workaround:
 	    __func__, unit);
 	goto err_unref;
     }
-#if 0
-    /* sync: wait for aio done */
-#ifdef USE_BLK_DRAIN
-    blk_drain(dp->be.bb);
-#else
-    /* XXX didnt work, context was not released */
-    while (du->status & D_BUSY)
-	;
-#endif
-#endif
 
-#else /* NEW_VDISK_BLKDEV */
+    /* synchronous read/write */
+#ifdef ALWAYS_ASYNC
+    if (du->status & D_ASYNC) {
+        /* sync: wait for aio done */
+	while (du->status & D_BUSY) {
+	     blk_drain(dp->be.bb);
+	}
+    }
+#endif /* ALWAYS_ASYNC */
+
+#else /* NEW_VDISK_BLKDEV -------------------------------------------- */
 
     /* find disk slice */
     for (i = 0; i < NUM_PART; i++, dp++) {
@@ -702,9 +698,9 @@ again:
 		__func__, unit, size, reqsize);
 	    du->status |= D_ERROR;
 	}
-#endif /* NEW_VDISK_MMAP */
+#endif  /* NEW_DISK_MMAP */
     }
-#endif /* NEW_VDISK_BLKDEV */
+#endif /* NEW_VDISK_BLKDEV -------------------------------------------- */
 
     /* check result */
     if (du->status & D_ERROR) {
@@ -743,6 +739,7 @@ x:
     return (TRUE);
 }
 #endif /* NEW_VDISK */
+
 #if !defined(CONFIG_USER_ONLY)
 void cpu_check_irqs(CPUSPARCState *env)
 {
