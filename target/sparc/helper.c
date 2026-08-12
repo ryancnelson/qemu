@@ -23,6 +23,8 @@
 #include "qemu/host-utils.h"
 #include "exec/cpu-common.h"
 #include "exec/helper-proto.h"
+#include "qemu/log.h"	/* sun4v */
+#include "qemu/main-loop.h" /* sun4v */
 
 void cpu_raise_exception_ra(CPUSPARCState *env, int tt, uintptr_t ra)
 {
@@ -227,5 +229,59 @@ target_ulong helper_rdasr17(CPUSPARCState *env)
     val |= (cs->cpu_index) << 28;   /* [31:28] INDEX  */
 
     return val;
+}
+#endif
+#if 1 /* BUG sun4v */
+void helper_wrssr(CPUSPARCState *env, target_ulong new)
+{
+    CPUState	*cs = env_cpu(env);
+
+    qemu_log("%s: cpu:%d new:%lx old%lx\n",
+	__func__, cs->cpu_index, new, env->ssr);
+#if 0
+    old = env->ssr;
+    if (new & 1) {
+	qatomic_or(&env->ssr, 1ULL);
+    } else {
+	qatomic_and(&env->ssr, ~1ULL);
+    }
+#endif
+    if ((new & 1) == 0) {
+	/* pause strand */
+	qemu_log("%s: cpu:%d paused pstate:0x%x hpstate:0x%lx tl:%d\n",
+	    __func__, cs->cpu_index,
+	    env->pstate, env->hpstate, env->tl);
+	//qatomic_or(&env->ssr, 1ULL);
+#if 0
+	bql_lock();
+#endif
+	/* we move to halt status after this instruction
+	 * until something happen to execute
+	 */
+
+	/*
+	 * XXX: To avoild deadlock, ensure no pended asynchronous
+	 * interrupts.
+	 */
+	if (!env->ivec_status &&
+            !((env->int_queue[0] ^ env->int_queue[1]) & 0x3fc0) &&
+            !((env->int_queue[2] ^ env->int_queue[3]) & 0x3fc0) &&
+            !((env->int_queue[4] ^ env->int_queue[5]) & 0x3fc0) &&
+	    !env->softint && !env->pil_in) {
+		cs->halted = 1;
+	}
+#if 0
+	cpu_interrupt(cs, CPU_INTERRUPT_HALT);
+	bql_unlock();
+#endif
+    }
+#if 0
+    else {
+	/* resume strand */
+	/* never happen */
+	qemu_log("%s: cpu:%d resumed pstate:%x hpstate:%lx\n",
+	    __func__, env_cpu(env)->cpu_index, env->pstate, env->hpstate);
+    }
+#endif
 }
 #endif

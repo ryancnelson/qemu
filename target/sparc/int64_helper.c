@@ -743,23 +743,75 @@ x:
 #if !defined(CONFIG_USER_ONLY)
 void cpu_check_irqs(CPUSPARCState *env)
 {
+#if 1 /* BUG sun4v */
+    CPUState *cs = env_cpu(env);
+#else
     CPUState *cs;
+#endif
     uint32_t pil = env->pil_in |
                   (env->softint & ~(SOFTINT_TIMER | SOFTINT_STIMER));
-
+#if 1 /* BUG sun4v */
+    int int_hard_pended = cpu_test_interrupt(cs, CPU_INTERRUPT_HARD);
+#endif
     /* We should be holding the BQL before we mess with IRQs */
     g_assert(bql_locked());
 
-#if 1 /* BUG fix sun4v */
-    if (env->ivec_status) {
-        return;
-    }
-#else
     /* TT_IVEC has a higher priority (16) than TT_EXTINT (31..17) */
+#if 1 /* BUG fix sun4v */
+    if (cpu_has_hypervisor(env)) {
+#if 0
+	qemu_log(
+"%s: cpu:%d pstat:%x hpstat:%lx ivec:%lx int_q:%lx-%lx, %lx-%lx, %lx-%lx\n",
+	    __func__, cs->cpu_index, env->pstate, env->hpstate,
+	    env->ivec_status,
+	    env->int_queue[0], env->int_queue[1],
+	    env->int_queue[2], env->int_queue[3],
+	    env->int_queue[4], env->int_queue[5]);
+#endif
+        env->interrupt_index = 0;
+#ifdef IVEC_MASKABLE
+    if (env->pstate & PS_IE) {
+#endif
+	/* we cannnot block device vector */
+	if (env->ivec_status != 0) {
+	    /* we have pended interrupt vector */
+            env->interrupt_index = TT_IVEC;
+            cpu_interrupt(cs, CPU_INTERRUPT_HARD);
+	    return;
+	}
+#ifdef IVEC_MASKABLE
+    }
+#endif
+	if (cpu_hypervisor_mode(env)) {
+	    if (int_hard_pended) {
+                cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
+	    }
+	    return;
+        }
+
+        if (env->pstate & PS_IE) {
+
+	    if ((env->int_queue[0] != env->int_queue[1])) {
+	        env->interrupt_index = TT_CPU_MONDO;
+	    }
+	    else if ((env->int_queue[2] != env->int_queue[3])) {
+	        env->interrupt_index = TT_DEV_MONDO;
+	    }
+	    else if ((env->int_queue[4] !=  env->int_queue[5])) {
+	        env->interrupt_index = TT_RESUMABLE_ERROR;
+	    }
+	    if (env->interrupt_index) {
+	        /*  mondo trapps detected */
+                cpu_interrupt(cs, CPU_INTERRUPT_HARD);
+	        return;
+	    }
+        }
+    } else
+#endif
     if (env->ivec_status & 0x20) {
         return;
     }
-#endif
+
     cs = env_cpu(env);
     /*
      * check if TM or SM in SOFTINT are set
@@ -882,10 +934,20 @@ void sparc_cpu_do_interrupt(CPUState *cs)
 #endif
 #if !defined(CONFIG_USER_ONLY)
     if (env->tl >= env->maxtl) {
+#if 1
+        cpu_abort(cs, "cpu:%d Trap 0x%04x while trap level (%d) >= MAXTL (%d),"
+                  " Error state", cs->cpu_index, cs->exception_index, env->tl, env->maxtl);
+#else
         cpu_abort(cs, "Trap 0x%04x while trap level (%d) >= MAXTL (%d),"
                   " Error state", cs->exception_index, env->tl, env->maxtl);
+#endif
         return;
     }
+#endif
+#if 1
+    qemu_log("cpu:%d %s: pc:%lx pst:0x%x hpst:0x%lx pil:%d tl:%d, exc_ix:0x%x, intr_ix:0x%x\n",
+	cs->cpu_index, __func__, env->pc, env->pstate, env->hpstate, env->psrpil, env->tl,
+	cs->exception_index, env->interrupt_index);
 #endif
     if (env->tl < env->maxtl - 1) {
         env->tl++;
@@ -921,7 +983,32 @@ void sparc_cpu_do_interrupt(CPUState *cs)
         if (!cpu_has_hypervisor(env)) {
             cpu_change_pstate(env, PS_PEF | PS_PRIV | PS_IG);
         }
+#if 1 /* BUG sun4v */
+        else {
+	    qemu_log("trap: cpu:%d TT_IVEC\n", cs->cpu_index);
+	    /* XXX: right ? */
+            env->hpstate |= HS_PRIV;
+
+	    /* XXX: right ? */
+            cpu_change_pstate(env, PS_PEF | PS_PRIV | PS_IG);
+
+	    /* XXX: workaround against repeating II_IVEC */
+#ifndef IVEC_MASKABLE
+	    cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
+#endif
+	}
         break;
+
+    case TT_CPU_MONDO:
+    case TT_DEV_MONDO:
+    case TT_RESUMABLE_ERROR:
+        g_assert(cpu_hypervisor_mode(env) == 0);
+	qemu_log("trap: cpu:%d MONDO trap:0x%x\n", cs->cpu_index, intno);
+	/* mondoes notifies to supervisor */
+        cpu_change_pstate(env, PS_PEF | PS_PRIV);
+	break;
+#endif
+
     case TT_TFAULT:
     case TT_DFAULT:
     case TT_TMISS ... TT_TMISS + 3:

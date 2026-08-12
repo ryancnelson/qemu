@@ -30,6 +30,8 @@
 #include "fpu/softfloat.h"
 #include "target/sparc/translate.h"
 
+#include "exec/log.h"
+
 //#define DEBUG_FEATURES
 
 static void sparc_cpu_reset_hold(Object *obj, ResetType type)
@@ -41,7 +43,7 @@ static void sparc_cpu_reset_hold(Object *obj, ResetType type)
     if (scc->parent_phases.hold) {
         scc->parent_phases.hold(obj, type);
     }
-
+    qemu_log("%s: cpu:%d called\n", __func__, cs->cpu_index);
     memset(env, 0, offsetof(CPUSPARCState, end_reset_fields));
     env->cwp = 0;
 #ifndef TARGET_SPARC64
@@ -87,10 +89,38 @@ static bool sparc_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
     if (interrupt_request & CPU_INTERRUPT_HARD) {
         CPUSPARCState *env = cpu_env(cs);
+#if 1 /* BUG sun4v */
+	/* restart potentially paused strand */
+	cs->halted = 0;
 
+        if (env->interrupt_index == TT_IVEC
+#ifdef IVEC_MASKABLE
+            && cpu_interrupts_enabled(env)
+#endif
+	) {
+	    /* TT_IVEC is not maskable for niagara 1 */
+	    qemu_log("%s: cpu %d: ivec:%lx intr_index:0x%x tl:%d\n",
+		__func__, cs->cpu_index, env->ivec_status, env->interrupt_index,
+		env->tl);
+
+                cs->exception_index = env->interrupt_index;
+                sparc_cpu_do_interrupt(cs);
+                return true;
+	}
+
+	if (cpu_hypervisor_mode(env)) {
+	    /*
+	     * In hypervisor mode, only above cases are acceptable.
+	     */
+    	    return false;
+	}
+#endif /* sun4v */
         if (cpu_interrupts_enabled(env) && env->interrupt_index > 0) {
             int pil = env->interrupt_index & 0xf;
             int type = env->interrupt_index & 0xf0;
+
+	    qemu_log("%s: cpu %d: ivec:%lx intr_index:0x%x\n",
+		 __func__, cs->cpu_index, env->ivec_status, env->interrupt_index);
 
             if (type != TT_EXTINT || cpu_pil_allowed(env, pil)) {
                 cs->exception_index = env->interrupt_index;
@@ -783,6 +813,17 @@ static void sparc_restore_state_to_opc(CPUState *cs,
 #ifndef CONFIG_USER_ONLY
 static bool sparc_cpu_has_work(CPUState *cs)
 {
+#if 1 /* BUG sun4v */
+    if (cpu_has_hypervisor(cpu_env(cs))) {
+	/* test pseudo interrupt to wakeup strand */
+        if (cpu_test_interrupt(cs, CPU_INTERRUPT_TGT_EXT_0)) {
+            cpu_reset_interrupt(cs, CPU_INTERRUPT_TGT_EXT_0);
+	    return (true);
+        }
+        /* XXX: Is masking interrupts required for sun4v ? */
+        return (cpu_test_interrupt(cs, CPU_INTERRUPT_HARD));
+    }
+#endif
     return cpu_test_interrupt(cs, CPU_INTERRUPT_HARD) &&
            cpu_interrupts_enabled(cpu_env(cs));
 }

@@ -3034,7 +3034,12 @@ TRANS(RDSTICK_CMPR, 64, do_rd_special, supervisor(dc), a->rd, do_rdstick_cmpr)
  */
 static TCGv do_rdstrand_status(DisasContext *dc, TCGv dst)
 {
+#if 1 /* BUG sun4v */
+    tcg_gen_ld_tl(dst, tcg_env, env64_field_offsetof(ssr));
+    return dst;
+#else
     return tcg_constant_tl(1);
+#endif
 }
 
 TRANS(RDSTRAND_STATUS, HYPV, do_rd_special, true, a->rd, do_rdstrand_status)
@@ -3262,7 +3267,7 @@ static TCGv do_rdgl(DisasContext *dc, TCGv dst)
 }
 
 TRANS(RDPR_gl, GL, do_rd_special, supervisor(dc), a->rd, do_rdgl)
-
+#if 0 /* BUG sun4v */
 /* UA2005 strand status */
 static TCGv do_rdssr(DisasContext *dc, TCGv dst)
 {
@@ -3271,7 +3276,7 @@ static TCGv do_rdssr(DisasContext *dc, TCGv dst)
 }
 
 TRANS(RDPR_strand_status, HYPV, do_rd_special, hypervisor(dc), a->rd, do_rdssr)
-
+#endif
 static TCGv do_rdver(DisasContext *dc, TCGv dst)
 {
     tcg_gen_ld_tl(dst, tcg_env, env64_field_offsetof(version));
@@ -3638,15 +3643,23 @@ static void do_wrgl(DisasContext *dc, TCGv src)
 }
 
 TRANS(WRPR_gl, GL, do_wr_special, a, supervisor(dc), do_wrgl)
-
 /* UA2005 strand status */
+#if 1 /* BUG sun4v */
+static void do_wrssr(DisasContext *dc, TCGv src)
+{
+    gen_helper_wrssr(tcg_env, src);
+}
+
+TRANS(WRSSR, HYPV, do_wr_special, a, hypervisor(dc), do_wrssr)
+#else
 static void do_wrssr(DisasContext *dc, TCGv src)
 {
     tcg_gen_st_tl(src, tcg_env, env64_field_offsetof(ssr));
+    dc->base.is_jmp = DISAS_EXIT;
 }
 
 TRANS(WRPR_strand_status, HYPV, do_wr_special, a, hypervisor(dc), do_wrssr)
-
+#endif
 TRANS(WRTBR, 32, do_wr_special, a, supervisor(dc), do_wrtba)
 
 static void do_wrhpstate(DisasContext *dc, TCGv src)

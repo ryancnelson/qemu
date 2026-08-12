@@ -20,6 +20,7 @@
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 #include "qemu/range.h"
+#include "qemu/main-loop.h"
 #include "cpu.h"
 #include "tcg/tcg.h"
 #include "exec/helper-proto.h"
@@ -1323,7 +1324,6 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
 }
 
 #else /* CONFIG_USER_ONLY */
-
 uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
                        int asi, uint32_t memop)
 {
@@ -1562,8 +1562,17 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
         {
 	    int	i;
 
+	    qemu_log("cpu:%d sta ASI_SWVR_UDB_INTR_R: ivec:0x%lx intr_index:0x%x tl:%d\n",
+		env_cpu(env)->cpu_index, env->ivec_status, env->interrupt_index,
+		env->tl);
+
 	    /* find the highest priority vector */
-	    ret = 0;	/* no interrupt right ? */
+	    ret = 0;	/* no pended interrupt */
+
+	    if (env->ivec_status == 0) {
+		break;
+	    }
+
 	    i = 63;
 #if 0
 {
@@ -1579,14 +1588,25 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
 	    }
 }
 #endif
-	    for (; i>= 0; i--) {
-		if (env->ivec_status & (1ULL << i)) {
-		        /* clear the found bit */
-		        env->ivec_status &= ~(1ULL << i);
-		        ret = i;	
-			break;
+	    bql_lock();
+	    for (; i >= 0; i--) {
+		if (env->ivec_status & (1UL << i)) {
+		    /* clear the found bit */
+		    env->ivec_status &= ~(1UL << i);
+		    ret = i;
+
+		    /* deassert vector interrupt request */
+		    if (env->ivec_status == 0) {
+			/*
+			 * Update send interrupt request to target
+			 * cpu_check_irqs() implies deassert CPU_INTERRUPT_HARD
+			 */
+			cpu_check_irqs(env);
+		    }
+		    break;
 		}
 	    }
+	    bql_unlock();
             break;
         }
 #endif
@@ -1614,6 +1634,21 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
           sparc_raise_mmu_fault(cs, addr, true, false, 1, size, GETPC());
         }
         break;
+
+#if 1 /* BUG fix sun4v */
+    case ASI_QUEUE: /* UA2005 CPU mondo queue */
+{
+	int	ix;
+
+	ix = (addr - 0x3c0) / 8;
+	ret = env->int_queue[ix];
+
+	qemu_log("cpu:%d lda ASI_QUEUE: addr:%lx (%d), ret:%lx\n",
+	    cs->cpu_index, addr, (int)((addr - 0x3c0) / 8), ret);
+
+	break;
+}
+#endif
     case ASI_DCACHE_DATA:     /* D-cache data */
     case ASI_DCACHE_TAG:      /* D-cache tag access */
     case ASI_ESTATE_ERROR_EN: /* E-cache error enable */
@@ -1627,6 +1662,48 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
     case ASI_EC_W:            /* E-cache tag */
     case ASI_EC_R:            /* E-cache tag */
         break;
+#if 1 /* BUG (not implemented) for NIAGARA2 */
+    case 0x41:		      /* niagara2 CMT registers */
+	switch (addr) {
+	case 0x00000000ULL:   /* ASI_CORE_AVAILABLE */
+		ret = 0xfffffffffffULL;
+		ret = 0x1ULL;
+		break;
+	case 0x00000010ULL:   /* ASI_CORE_ENABLE_STATUS */
+		ret = 0xfffffffffffULL;
+		ret = 0x1ULL;
+		break;
+	case 0x00000020ULL:   /* ASI_CORE_ENABLE */
+		ret = 0xfffffffffffULL;
+		ret = 0x1ULL;
+		break;
+	case 0x00000030ULL:   /* ASI_XIR_STEERING  */
+		ret = 0xFFFFFFFFFFFFFFFULL;
+		break;
+	case 0x00000038ULL:   /* ASI_CMT_TICK_ENABLE */
+		ret = 0ULL;
+		break;
+	case 0x00000050ULL:   /* ASI_CORE_RUNNING_RW */
+		ret = 1ULL;
+		break;
+	case 0x00000058ULL:   /* ASI_CORE_RUNNING_STATUS */
+		ret = 1ULL;
+		break;
+	}
+	break;
+
+    case 0x63:
+	switch (addr) {
+	case 0x00000000ULL:	/* ASI_CMT_CORE_OMTR_ID */
+	    ret = 0ULL << 6 | 0ULL;
+
+	    break;
+	case 0x00000010ULL:	/* ASI_CMT_STRAND_ID */
+	    ret = 7ULL << 32 | 0x3fULL << 16 | 0ULL;
+	    break;
+	}
+	break;
+#endif
     case ASI_DMMU_TSB_DIRECT_PTR: /* D-MMU data pointer */
     case ASI_ITLB_DATA_IN:        /* I-MMU data in, WO */
     case ASI_IMMU_DEMAP:          /* I-MMU demap, WO */
@@ -1770,6 +1847,14 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
             goto illegal_insn;
         }
         break;
+#if 1
+    case 0x41:		      /* niagara2 CMT registers */
+	switch (addr) {
+	case 0x00000038ULL:   /* ASI_CMT_TICK_ENABLE */
+		/* XXX */
+		return;
+	}
+#endif
     case ASI_UPA_CONFIG: /* UPA config */
         /* XXX */
         return;
@@ -1849,20 +1934,57 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
         demap_tlb(env->itlb, addr, "immu", env);
         return;
 #if 1 /* BUG fix sun4v */
-    case ASI_SWVR_UDB_INTR_W: /* Incoming Vector, RO 0x73 */
+    case ASI_SWVR_UDB_INTR_W: /* Interrupt Vector Dispatch Register WO 0x73*/
         {
 	    uint32_t	target;
-	    uint64_t	ivec;
-	    CPUSPARCState *target_env;
+	    CPUState	*tcs;
+	    CPUSPARCState *tenv;
 
-	    target = (val >> 8) & 0xff;	/* current 0x1f */
-	    target_env = &SPARC_CPU(qemu_get_cpu(target))->env;
-	    ivec = 1ULL << (val & 0x3f);
+	    target = (val >> 8) & 0x3f;	/* current max 0x1f */
 
-	    /* should be atomic */
-	    target_env->ivec_status |= ivec;
+	    /* notify to target cpu */
+	    tcs = qemu_get_cpu(target);
+	    tenv = cpu_env(tcs);
 
 	    /* XXX - how can I notify trap to other cpu? */
+	    qemu_log(
+"cpu:%d sta ASI_SWVR_UDB_INTR_W: ivecno:0x%x => cpu:%d ivec:%lx pst:0x%x hpst:0x%lx tl:%d\n",
+		env_cpu(env)->cpu_index, (int)val & 0x3f,
+		target, tenv->ivec_status, tenv->pstate, tenv->hpstate,
+		tenv->tl);
+
+	    //qatomic_or(&tenv->ivec_status, 1UL << (val & 0x3f));
+#if 1
+	    //mondo_deliver_vecintr(tcs);
+
+	    /* update interrupt requests */
+	    //if (cpu_interrupts_enabled(tenv)) {
+	        bql_lock();
+	        qatomic_or(&tenv->ivec_status, 1UL << (val & 0x3f));
+	        cpu_check_irqs(tenv);
+	        if (tenv->interrupt_index) {
+
+		    /* XXX cpu_check_irqs()  should implies */
+		    if (cpu_test_interrupt(tcs, CPU_INTERRUPT_HARD) == 0) {
+		         cpu_interrupt(tcs, CPU_INTERRUPT_HARD);
+		    }
+#if 1
+		    tcs->halted = 0;
+		    if (cpu_test_interrupt(tcs, CPU_INTERRUPT_HALT)) {
+		        cpu_reset_interrupt(tcs, CPU_INTERRUPT_HALT);
+		    }
+#endif
+		    cpu_interrupt(tcs, CPU_INTERRUPT_TGT_EXT_0);
+		    qemu_cpu_kick(tcs);
+	        } else {
+		    /* deassert interrupt */
+		    if (cpu_test_interrupt(tcs, CPU_INTERRUPT_HARD)) {
+		        cpu_reset_interrupt(tcs, CPU_INTERRUPT_HARD);
+		    }
+		}
+	        bql_unlock();
+	    //}
+#endif
             break;
         }
 #endif
@@ -1990,6 +2112,9 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
 	int	tt;
 	int	ix;
 
+	qemu_log("cpu:%d sta ASI_QUEUE: addr:%lx (%d), val:%lx\n",
+	    cs->cpu_index, addr, (int)((addr - 0x3c0) / 8), val);
+
 	switch (addr) {
 	case 0x3c0:
 	case 0x3c8:
@@ -2017,19 +2142,16 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
 	    return;
 	}
 	ix = (addr - 0x3c0) / 8;
+
 	env->int_queue[ix] = val;
 
-	if (tt) {
-		int	head, tail;
-
-		head = (env->int_queue[ix & ~1] >> 6) & 0xff;
-		tail = (env->int_queue[ix | 1]  >> 6) & 0xff;
-		if (head != tail) {
-		    /* raise trap */
-#if 0 /* BUG fix sun4v */
-		    cpu_raise_exception_ra(env, tt, GETPC());
-#endif
-		}
+        if (tt) {
+	    /* need to update interrupt */
+	    if (cpu_interrupts_enabled(env)) {
+		bql_lock();
+		cpu_check_irqs(env);
+		bql_unlock();
+	    }
 	}
         return;
 }
