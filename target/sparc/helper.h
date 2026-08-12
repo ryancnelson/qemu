@@ -7,6 +7,9 @@ DEF_HELPER_1(power_down, void, env)
 #else
 DEF_HELPER_FLAGS_2(wrpil, TCG_CALL_NO_RWG, void, env, tl)
 DEF_HELPER_2(wrgl, void, env, tl)
+#if 1 /* BUG sun4v */
+DEF_HELPER_2(wrssr, void, env, tl)
+#endif
 DEF_HELPER_2(wrpstate, void, env, tl)
 DEF_HELPER_1(done, void, env)
 DEF_HELPER_1(retry, void, env)

@@ -734,17 +734,33 @@ static inline int cpu_supervisor_mode(CPUSPARCState *env1)
 }
 #endif
 
+#define IVEC_MASKABLE	/* dont define for Niagara 1 */
+
 static inline int cpu_interrupts_enabled(CPUSPARCState *env1)
 {
 #if !defined (TARGET_SPARC64)
     if (env1->psret != 0)
         return 1;
 #else
+#if 1 /* BUG sun4v */
+    if (cpu_has_hypervisor(env1)) {
+
+#ifdef IVEC_MASKABLE
+        if (env1->pstate & PS_IE) {
+	    return 1;
+        }
+#else
+        if (env1->ivec_status != 0) {
+	    /* vector interrupt not blockable */
+	    return 1;
+        }
+#endif /* IVEC_MASKABLE */
+    } 
+#endif
     if ((env1->pstate & PS_IE) && !cpu_hypervisor_mode(env1)) {
         return 1;
     }
 #endif
-
     return 0;
 }
 

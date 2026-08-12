@@ -39,9 +39,20 @@ static void cpu_kick_irq(SPARCCPU *cpu)
 {
     CPUState *cs = CPU(cpu);
     CPUSPARCState *env = &cpu->env;
-
+#if 1
+    if (cpu_test_interrupt(cs, CPU_INTERRUPT_HALT)) {
+        cpu_reset_interrupt(cs, CPU_INTERRUPT_HALT);
+    }
+#endif
     cs->halted = 0;
     cpu_check_irqs(env);
+#if 1
+    qemu_log(
+"%s: cpu:%d soft:0x%x intr_ix:0x%x pil:%d, pst:%x hpst:%lx\n",
+	__func__, cs->cpu_index, env->softint, env->interrupt_index,
+	env->psrpil, env->pstate, env->hpstate);
+    //g_assert(env->interrupt_index != 0);
+#endif
     qemu_cpu_kick(cs);
 }
 
@@ -76,6 +87,13 @@ void sparc64_cpu_set_ivec_irq(void *opaque, int irq, int level)
 typedef struct ResetData {
     SPARCCPU *cpu;
     uint64_t prom_addr;
+#if 1
+    uint64_t membase;
+    uint64_t memsize; 
+    uint64_t hypervisor_desc;
+    uint64_t strand_start_set;
+    uint64_t total_memsize; 
+#endif
 } ResetData;
 
 static CPUTimer *cpu_timer_create(const char *name, SPARCCPU *cpu,
@@ -106,6 +124,12 @@ static void cpu_timer_reset(CPUTimer *timer)
     timer_del(timer->qtimer);
 }
 
+#if 1
+#define	VER_MASK_SHIFT		24
+#define	VER_MASK_MASK		0xff
+#define	VER_MASK_MAJOR_SHIFT	(VER_MASK_SHIFT + 4)
+#define	VER_MASK_MAJOR_MASK	0xf
+#endif
 static void main_cpu_reset(void *opaque)
 {
     ResetData *s = (ResetData *)opaque;
@@ -121,26 +145,76 @@ static void main_cpu_reset(void *opaque)
     env->gregs[1] = 0; /* Memory start */
     env->gregs[2] = current_machine->ram_size; /* Memory size */
     env->gregs[3] = 0; /* Machine description XXX */
+#if 0
+    env->gregs[4] = (1UL << current_machine->smp.cpus) - 1; /* strand start */
+    env->gregs[5] = 0;	/* total physical memory, not used */
+#endif
+#if 1
+    env->ssr = ((CPU(s->cpu)->cpu_index) << 8) | 1;
+    env->hver = 2 << VER_MASK_MAJOR_SHIFT;	/* Niagara 1 */
+#endif
     if (nr_resets++ == 0) {
         /* Power on reset */
         env->pc = s->prom_addr + 0x20ULL;
     } else {
-        env->pc = s->prom_addr + 0x40ULL;
+	CPU(s->cpu)->halted = 0;
+        env->pc = s->prom_addr + 0x20ULL;
     }
     env->npc = env->pc + 4;
-#if 1
-    if (CPU(s->cpu)->cpu_index != 0) {
-        CPU(s->cpu)->halted = 1;
-    }
-#endif
 }
+#if 1 /* BUG sun4v */
+/*
+ * Niagara %ver
+ */
+static void main_cpu_reset_sun4v(void *opaque)
+{
+    ResetData *s = (ResetData *)opaque;
+    CPUSPARCState *env = &s->cpu->env;
 
+    cpu_reset(CPU(s->cpu));
+
+    cpu_timer_reset(env->tick);
+    cpu_timer_reset(env->stick);
+    cpu_timer_reset(env->hstick);
+
+    env->gregs[1] = s->membase; /* Memory start */
+    env->gregs[2] = current_machine->ram_size; /* Memory size */
+    env->gregs[3] = s->hypervisor_desc;
+    env->gregs[4] = (1UL << current_machine->smp.cpus) - 1; /* strand start */
+    env->gregs[5] = 0;	/* total physical memory, not used */
+    env->ssr = ((CPU(s->cpu)->cpu_index) << 8) | 1;
+    env->hver = 2 << VER_MASK_MAJOR_SHIFT;	/* Niagara 1 */
+    if (CPU(s->cpu)->cpu_index == 0) {
+        /* Power on reset */
+        env->pc = s->prom_addr + 0x20;
+    } else {
+	/*
+	 * XXX:
+	 * brain damaged early niagara cpus with reset.bin start
+	 * from +0x20, not 0x30.
+	 */
+        env->pc = s->prom_addr + 0x20;
+	/* XXX workaround for now */
+	//CPU(s->cpu)->halted = 1;
+	CPU(s->cpu)->halted = 0;
+	//CPU(s->cpu)->stop = 1;
+	//CPU(s->cpu)->stopped = 1;
+    }
+    env->npc = env->pc + 4;
+}
+#endif
 static void tick_irq(void *opaque)
 {
     SPARCCPU *cpu = opaque;
     CPUSPARCState *env = &cpu->env;
 
     CPUTimer *timer = env->tick;
+#if 1
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    qemu_log("%s: disabled:%d, now:%ld\n", __func__, timer->disabled, now);
+}
+#endif
 
     if (timer->disabled) {
         trace_sparc64_cpu_tick_irq_disabled();
@@ -159,6 +233,12 @@ static void stick_irq(void *opaque)
     CPUSPARCState *env = &cpu->env;
 
     CPUTimer *timer = env->stick;
+#if 1
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    qemu_log("%s: disabled:%d, now:%ld\n", __func__, timer->disabled, now);
+}
+#endif
 
     if (timer->disabled) {
         trace_sparc64_cpu_stick_irq_disabled();
@@ -177,7 +257,12 @@ static void hstick_irq(void *opaque)
     CPUSPARCState *env = &cpu->env;
 
     CPUTimer *timer = env->hstick;
-
+#if 1
+{
+    int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
+    qemu_log("%s: disabled:%d, now:%ld\n", __func__, timer->disabled, now);
+}
+#endif
     if (timer->disabled) {
         trace_sparc64_cpu_hstick_irq_disabled();
         return;
@@ -245,7 +330,10 @@ void cpu_tick_set_limit(CPUTimer *timer, uint64_t limit)
     if (expires < now) {
         expires = now + 1;
     }
-
+#if 1
+    qemu_log("cpu:%d %s: now:%ld limit:%ld\n",
+	current_cpu->cpu_index, __func__, now, expires - now);
+#endif
     trace_sparc64_cpu_tick_set_limit(timer->name, real_limit,
                                      timer->disabled ? "disabled" : "enabled",
                                      timer, limit,
@@ -302,3 +390,43 @@ SPARCCPU *sparc64_cpu_devinit(const char *cpu_type, uint64_t prom_addr)
 
     return cpu;
 }
+#if 1 /* sun4v */
+SPARCCPU *sparc64_cpu_devinit_sun4v(const char *cpu_type,
+    uint64_t prom_addr, uint64_t membase, uint64_t hypervisor_desc)
+{
+    SPARCCPU *cpu;
+    CPUSPARCState *env;
+    ResetData *reset_info;
+
+    uint32_t   tick_frequency = 100 * 1000000;
+    uint32_t  stick_frequency = 100 * 1000000;
+    uint32_t hstick_frequency = 100 * 1000000;
+
+    cpu = SPARC_CPU(object_new(cpu_type));
+    qdev_init_gpio_in_named(DEVICE(cpu), sparc64_cpu_set_ivec_irq,
+                            "ivec-irq", IVEC_MAX);
+    qdev_realize(DEVICE(cpu), NULL, &error_fatal);
+    env = &cpu->env;
+
+    env->tick = cpu_timer_create("tick", cpu, tick_irq,
+                                  tick_frequency, TICK_INT_DIS,
+                                  TICK_NPT_MASK);
+
+    env->stick = cpu_timer_create("stick", cpu, stick_irq,
+                                   stick_frequency, TICK_INT_DIS,
+                                   TICK_NPT_MASK);
+
+    env->hstick = cpu_timer_create("hstick", cpu, hstick_irq,
+                                    hstick_frequency, TICK_INT_DIS,
+                                    TICK_NPT_MASK);
+
+    reset_info = g_new0(ResetData, 1);
+    reset_info->cpu = cpu;
+    reset_info->prom_addr = prom_addr;
+    reset_info->membase = membase;
+    reset_info->hypervisor_desc = hypervisor_desc;
+    qemu_register_reset(main_cpu_reset_sun4v, reset_info);
+
+    return cpu;
+}
+#endif

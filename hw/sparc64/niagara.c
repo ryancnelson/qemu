@@ -540,6 +540,16 @@ static const MemoryRegionOps sun4v_clock_ops = {
     .read = sun4v_clock_read,
     .write = sun4v_clock_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
 };
 
 static void sun4v_clock_init(hwaddr addr)
@@ -607,28 +617,116 @@ static uint64_t sun4v_iob_read(void *opaque, hwaddr addr,
     return val;
 }
 
+int	iob_dispatch[64];
+
 static void sun4v_iob_write(void *opaque, hwaddr addr,
                              uint64_t val, unsigned size)
 {
+    uint32_t	typ;
+    uint32_t	cpu;
+    uint32_t	vec;
+    MachineState *ms = MACHINE(qdev_get_machine());
+    CPUState	*tcs;
+    //SPARCCPU *sparc_cpu = SPARC_CPU(current_cpu);
+
+    //trace_sun4v_iob_write(addr, val);
 #if 0
-    uint_t	cpu;
+    qemu_log("%s:[cpu:%d: ssr0x%lx] addr:0x%lx val:0x%lx size:%d\n",
+	__func__, current_cpu->cpu_index, sparc_cpu->env.ssr,
+	(uint64_t)addr, val, size);
+	    cpu_pause(qemu_get_cpu(cpu));
+#endif
+    typ = (val >> 16) & 0x3;
+    cpu = (val >> 8) & 0x1f;
+    vec = val & 0x3f;
+    tcs = qemu_get_cpu(cpu);
+
     switch (addr) {
     case 0x0000:
 	/* INT_MAN register */
-	cpu = (val >> 8) & 0x1f 
-	vec = val & 0x3f;
+	qemu_log("%s:[cpu:%d] INT_MAN vec %d assigned to cpu %d\n",
+	    __func__, current_cpu->cpu_index, vec, cpu);
+	iob_dispatch[vec] = cpu;
 	break;
 
    case 0x0400:
 	/* INT_CTL register */
-#endif
-    //trace_sun4v_iob_write(addr, val);
+	qemu_log("%s:[cpu:%d] INT_CTL val:0x%lx\n",
+	    __func__, current_cpu->cpu_index, val);
+	/* notyet */
+	break;
+
+   case 0x0800:
+	/* INT_VEC_DIS register */
+	if (cpu >= ms->smp.cpus) {
+	    break;
+	}
+	qemu_log("%s:[cpu:%d] INT_VEC_DIS cmd type:%d cpu:%d \n",
+	    __func__, current_cpu->cpu_index, typ, cpu);
+
+	g_assert(cpu != current_cpu->cpu_index);
+
+	switch (typ) {
+	case 0: /* vector interrupt */
+	    /* not yet */
+	    break;
+
+	case 1: /* reset */
+	    /* not yet */
+	    break;
+
+	case 2: /* idle */
+	    //bql_lock();
+
+	    /* clear pended wakeup request */
+	    cpu_reset_interrupt(tcs, CPU_INTERRUPT_TGT_EXT_0);
+
+	    /* make target halted*/
+	    tcs->halted = 1;
+	    cpu_interrupt(tcs, CPU_INTERRUPT_HALT);
+
+	    //bql_unlock();
+
+	    qemu_cpu_kick(tcs); /* mandatory */
+
+	    break;
+
+	case 3: /* resume */
+	    //qemu_get_cpu(cpu)->halted = 1;	/* still stop */
+	    //tcs->halted = 0;	/* run  mandatory */
+
+	    //bql_lock();
+
+	    cpu_reset_interrupt(tcs, CPU_INTERRUPT_HALT);
+
+	    /* private interrupt to wake up target */
+	    tcs->halted = 0;
+	    cpu_interrupt(tcs, CPU_INTERRUPT_TGT_EXT_0);
+
+	    //bql_unlock();
+
+	    qemu_cpu_kick(tcs); /* mandatory */
+
+	    break;
+	}
+	break;
+    }
 }
 
 static const MemoryRegionOps sun4v_iob_ops = {
     .read = sun4v_iob_read,
     .write = sun4v_iob_write,
     .endianness = DEVICE_NATIVE_ENDIAN,
+    .valid = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
+    .impl = {
+        .min_access_size = 1,
+        .max_access_size = 8,
+        .unaligned = true,
+    },
 };
 
 static void sun4v_iob_init(hwaddr addr)
@@ -698,7 +796,14 @@ static void niagara_init(MachineState *machine)
     s->cpu[0] = sparc64_cpu_devinit(machine->cpu_type, NIAGARA_PROM_BASE);
 #else
     for (int i = 0; i < machine->smp.cpus; i++) {
+#  if 1
         s->cpu[i] = sparc64_cpu_devinit(machine->cpu_type, NIAGARA_PROM_BASE);
+#  else
+        s->cpu[i] = sparc64_cpu_devinit_sun4v(machine->cpu_type, 
+	    NIAGARA_PROM_BASE /* 0xff.f000.0000 */, 
+	    NIAGARA_HV_RAM_BASE /* 0x40.0000*/,
+	    NIAGARA_HV_ROM_BASE /* 0x1f.1208.0000 */);
+#  endif
     }
 #endif
     /* set up devices */
