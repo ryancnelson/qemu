@@ -85,7 +85,8 @@ typedef struct NiagaraBoardState {
 #define NIAGARA_HV_RAM_BASE 0x400000ULL /* 0x100000ULL */
 #define NIAGARA_HV_RAM_SIZE 0x3c00000ULL /* 60 MiB */
 
-#define NIAGARA_PARTITION_RAM_BASE 0x80000000ULL
+#define NIAGARA_PARTITION_RAM_BASE (NIAGARA_HV_RAM_BASE + NIAGARA_HV_RAM_SIZE)
+//#define NIAGARA_PARTITION_RAM_BASE 0x80000000ULL
 
 #define NIAGARA_UART_BASE   0x1f10000000ULL
 #if 1
@@ -796,7 +797,7 @@ static void niagara_init(MachineState *machine)
     s->cpu[0] = sparc64_cpu_devinit(machine->cpu_type, NIAGARA_PROM_BASE);
 #else
     for (int i = 0; i < machine->smp.cpus; i++) {
-#  if 1
+#  if 0
         s->cpu[i] = sparc64_cpu_devinit(machine->cpu_type, NIAGARA_PROM_BASE);
 #  else
         s->cpu[i] = sparc64_cpu_devinit_sun4v(machine->cpu_type, 

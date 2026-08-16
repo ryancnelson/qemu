@@ -32,6 +32,8 @@
 #include "system/reset.h"
 #include "trace.h"
 
+#include "qemu/log.h"
+
 
 #define TICK_MAX             0x7fffffffffffffffULL
 
@@ -39,19 +41,27 @@ static void cpu_kick_irq(SPARCCPU *cpu)
 {
     CPUState *cs = CPU(cpu);
     CPUSPARCState *env = &cpu->env;
+
+    /* wakeup cpu */
 #if 1
     if (cpu_test_interrupt(cs, CPU_INTERRUPT_HALT)) {
+	qemu_log/*_mask*/(/*CPU_LOG_INT,*/
+	    "cpu:%d %s CPU_INTERRUPT_HALT pended,"
+	    " soft:0x%x intr_ix:0x%x pil:%d, pst:%x hpst:%lx\n",
+	    cs->cpu_index, __func__, env->softint, env->interrupt_index,
+	    env->psrpil, env->pstate, env->hpstate);
         cpu_reset_interrupt(cs, CPU_INTERRUPT_HALT);
     }
 #endif
     cs->halted = 0;
+
+    /* make cpu acknowledge softint */
     cpu_check_irqs(env);
 #if 1
-    qemu_log(
-"%s: cpu:%d soft:0x%x intr_ix:0x%x pil:%d, pst:%x hpst:%lx\n",
-	__func__, cs->cpu_index, env->softint, env->interrupt_index,
+    qemu_log_mask(CPU_LOG_INT,
+	"cpu:%d %s softint:0x%x intr_ix:0x%x pil:%d, pst:%x hpst:%lx\n",
+	cs->cpu_index, __func__, env->softint, env->interrupt_index,
 	env->psrpil, env->pstate, env->hpstate);
-    //g_assert(env->interrupt_index != 0);
 #endif
     qemu_cpu_kick(cs);
 }
@@ -87,7 +97,7 @@ void sparc64_cpu_set_ivec_irq(void *opaque, int irq, int level)
 typedef struct ResetData {
     SPARCCPU *cpu;
     uint64_t prom_addr;
-#if 1
+#if 1 /* sun4v */
     uint64_t membase;
     uint64_t memsize; 
     uint64_t hypervisor_desc;
@@ -124,7 +134,7 @@ static void cpu_timer_reset(CPUTimer *timer)
     timer_del(timer->qtimer);
 }
 
-#if 1
+#if 1 /* sun4v */
 #define	VER_MASK_SHIFT		24
 #define	VER_MASK_MASK		0xff
 #define	VER_MASK_MAJOR_SHIFT	(VER_MASK_SHIFT + 4)
@@ -145,11 +155,11 @@ static void main_cpu_reset(void *opaque)
     env->gregs[1] = 0; /* Memory start */
     env->gregs[2] = current_machine->ram_size; /* Memory size */
     env->gregs[3] = 0; /* Machine description XXX */
-#if 0
+#if 0  /* XXX this cause hang, why ? */
     env->gregs[4] = (1UL << current_machine->smp.cpus) - 1; /* strand start */
     env->gregs[5] = 0;	/* total physical memory, not used */
 #endif
-#if 1
+#if 1 /* sun4v */
     env->ssr = ((CPU(s->cpu)->cpu_index) << 8) | 1;
     env->hver = 2 << VER_MASK_MAJOR_SHIFT;	/* Niagara 1 */
 #endif
@@ -162,7 +172,7 @@ static void main_cpu_reset(void *opaque)
     }
     env->npc = env->pc + 4;
 }
-#if 1 /* BUG sun4v */
+#if 1 /* sun4v  doesn't work, why? */
 /*
  * Niagara %ver
  */
@@ -212,7 +222,9 @@ static void tick_irq(void *opaque)
 #if 1
 {
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    qemu_log("%s: disabled:%d, now:%ld\n", __func__, timer->disabled, now);
+    qemu_log_mask(CPU_LOG_INT,
+	"cpu:%d %s: disabled:%d, now:%ld\n",
+	env_cpu(env)->cpu_index, __func__, timer->disabled, now);
 }
 #endif
 
@@ -236,7 +248,9 @@ static void stick_irq(void *opaque)
 #if 1
 {
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    qemu_log("%s: disabled:%d, now:%ld\n", __func__, timer->disabled, now);
+    qemu_log_mask(CPU_LOG_INT,
+	"cpu:%d %s: disabled:%d, now:%ld\n",
+	env_cpu(env)->cpu_index, __func__, timer->disabled, now);
 }
 #endif
 
@@ -260,7 +274,9 @@ static void hstick_irq(void *opaque)
 #if 1
 {
     int64_t now = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
-    qemu_log("%s: disabled:%d, now:%ld\n", __func__, timer->disabled, now);
+    qemu_log_mask(CPU_LOG_INT,
+	"cpu:%d %s: disabled:%d, now:%ld\n",
+	env_cpu(env)->cpu_index, __func__, timer->disabled, now);
 }
 #endif
     if (timer->disabled) {
@@ -331,7 +347,7 @@ void cpu_tick_set_limit(CPUTimer *timer, uint64_t limit)
         expires = now + 1;
     }
 #if 1
-    qemu_log("cpu:%d %s: now:%ld limit:%ld\n",
+    qemu_log_mask(CPU_LOG_INT, "cpu:%d %s: now:%ld limit:%ld\n",
 	current_cpu->cpu_index, __func__, now, expires - now);
 #endif
     trace_sparc64_cpu_tick_set_limit(timer->name, real_limit,
@@ -398,9 +414,9 @@ SPARCCPU *sparc64_cpu_devinit_sun4v(const char *cpu_type,
     CPUSPARCState *env;
     ResetData *reset_info;
 
-    uint32_t   tick_frequency = 100 * 1000000;
-    uint32_t  stick_frequency = 100 * 1000000;
-    uint32_t hstick_frequency = 100 * 1000000;
+    uint32_t   tick_frequency = 200 * 1000000;
+    uint32_t  stick_frequency = 200 * 1000000;
+    uint32_t hstick_frequency = 200 * 1000000;
 
     cpu = SPARC_CPU(object_new(cpu_type));
     qdev_init_gpio_in_named(DEVICE(cpu), sparc64_cpu_set_ivec_irq,
