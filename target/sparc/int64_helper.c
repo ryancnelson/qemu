@@ -760,7 +760,7 @@ void cpu_check_irqs(CPUSPARCState *env)
 #if 1 /* BUG fix sun4v */
     if (cpu_has_hypervisor(env)) {
 #if 0
-	qemu_log(
+	qemu_log_mask(CPU_LOG_INT,
 "%s: cpu:%d pstat:%x hpstat:%lx ivec:%lx int_q:%lx-%lx, %lx-%lx, %lx-%lx\n",
 	    __func__, cs->cpu_index, env->pstate, env->hpstate,
 	    env->ivec_status,
@@ -945,7 +945,8 @@ void sparc_cpu_do_interrupt(CPUState *cs)
     }
 #endif
 #if 1
-    qemu_log("cpu:%d %s: pc:%lx pst:0x%x hpst:0x%lx pil:%d tl:%d, exc_ix:0x%x, intr_ix:0x%x\n",
+    qemu_log_mask(CPU_LOG_INT,
+	"cpu:%d %s: pc:%lx pst:0x%x hpst:0x%lx pil:%d tl:%d, exc_ix:0x%x, intr_ix:0x%x\n",
 	cs->cpu_index, __func__, env->pc, env->pstate, env->hpstate, env->psrpil, env->tl,
 	cs->exception_index, env->interrupt_index);
 #endif
@@ -985,7 +986,8 @@ void sparc_cpu_do_interrupt(CPUState *cs)
         }
 #if 1 /* BUG sun4v */
         else {
-	    qemu_log("trap: cpu:%d TT_IVEC\n", cs->cpu_index);
+	    qemu_log_mask(CPU_LOG_INT,
+		"trap: cpu:%d TT_IVEC\n", cs->cpu_index);
 	    /* XXX: right ? */
             env->hpstate |= HS_PRIV;
 
@@ -1003,7 +1005,8 @@ void sparc_cpu_do_interrupt(CPUState *cs)
     case TT_DEV_MONDO:
     case TT_RESUMABLE_ERROR:
         g_assert(cpu_hypervisor_mode(env) == 0);
-	qemu_log("trap: cpu:%d MONDO trap:0x%x\n", cs->cpu_index, intno);
+	qemu_log_mask(CPU_LOG_INT,
+	    "trap: cpu:%d MONDO trap:0x%x\n", cs->cpu_index, intno);
 	/* mondoes notifies to supervisor */
         cpu_change_pstate(env, PS_PEF | PS_PRIV);
 	break;

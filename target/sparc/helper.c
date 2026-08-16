@@ -236,8 +236,9 @@ void helper_wrssr(CPUSPARCState *env, target_ulong new)
 {
     CPUState	*cs = env_cpu(env);
 
-    qemu_log("%s: cpu:%d new:%lx old%lx\n",
-	__func__, cs->cpu_index, new, env->ssr);
+    qemu_log_mask(CPU_LOG_INT,
+	"cpu:%d %s new:%lx old%lx\n",
+	cs->cpu_index, __func__, new, env->ssr);
 #if 0
     old = env->ssr;
     if (new & 1) {
@@ -248,8 +249,9 @@ void helper_wrssr(CPUSPARCState *env, target_ulong new)
 #endif
     if ((new & 1) == 0) {
 	/* pause strand */
-	qemu_log("%s: cpu:%d paused pstate:0x%x hpstate:0x%lx tl:%d\n",
-	    __func__, cs->cpu_index,
+	qemu_log_mask(CPU_LOG_INT,
+	    "cpu:%d %s: paused pstate:0x%x hpstate:0x%lx tl:%d\n",
+	    cs->cpu_index, __func__,
 	    env->pstate, env->hpstate, env->tl);
 	//qatomic_or(&env->ssr, 1ULL);
 #if 0
@@ -263,6 +265,7 @@ void helper_wrssr(CPUSPARCState *env, target_ulong new)
 	 * XXX: To avoild deadlock, ensure no pended asynchronous
 	 * interrupts.
 	 */
+#if 0	/* still hang */
 	if (!env->ivec_status &&
             !((env->int_queue[0] ^ env->int_queue[1]) & 0x3fc0) &&
             !((env->int_queue[2] ^ env->int_queue[3]) & 0x3fc0) &&
@@ -270,6 +273,7 @@ void helper_wrssr(CPUSPARCState *env, target_ulong new)
 	    !env->softint && !env->pil_in) {
 		cs->halted = 1;
 	}
+#endif
 #if 0
 	cpu_interrupt(cs, CPU_INTERRUPT_HALT);
 	bql_unlock();

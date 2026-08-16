@@ -99,7 +99,8 @@ static bool sparc_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 #endif
 	) {
 	    /* TT_IVEC is not maskable for niagara 1 */
-	    qemu_log("%s: cpu %d: ivec:%lx intr_index:0x%x tl:%d\n",
+	    qemu_log_mask(CPU_LOG_INT,
+		"%s: cpu %d: ivec:%lx intr_index:0x%x tl:%d\n",
 		__func__, cs->cpu_index, env->ivec_status, env->interrupt_index,
 		env->tl);
 
@@ -119,7 +120,8 @@ static bool sparc_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
             int pil = env->interrupt_index & 0xf;
             int type = env->interrupt_index & 0xf0;
 
-	    qemu_log("%s: cpu %d: ivec:%lx intr_index:0x%x\n",
+	    qemu_log_mask(CPU_LOG_INT,
+		"%s: cpu %d: ivec:%lx intr_index:0x%x\n",
 		 __func__, cs->cpu_index, env->ivec_status, env->interrupt_index);
 
             if (type != TT_EXTINT || cpu_pil_allowed(env, pil)) {

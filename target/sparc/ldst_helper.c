@@ -1562,7 +1562,8 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
         {
 	    int	i;
 
-	    qemu_log("cpu:%d sta ASI_SWVR_UDB_INTR_R: ivec:0x%lx intr_index:0x%x tl:%d\n",
+	    qemu_log_mask(CPU_LOG_INT,
+		"cpu:%d sta ASI_SWVR_UDB_INTR_R: ivec:0x%lx intr_index:0x%x tl:%d\n",
 		env_cpu(env)->cpu_index, env->ivec_status, env->interrupt_index,
 		env->tl);
 
@@ -1643,7 +1644,8 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
 	ix = (addr - 0x3c0) / 8;
 	ret = env->int_queue[ix];
 
-	qemu_log("cpu:%d lda ASI_QUEUE: addr:%lx (%d), ret:%lx\n",
+	qemu_log_mask(CPU_LOG_INT,
+	    "cpu:%d lda ASI_QUEUE: addr:%lx (%d), ret:%lx\n",
 	    cs->cpu_index, addr, (int)((addr - 0x3c0) / 8), ret);
 
 	break;
@@ -1944,11 +1946,18 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
 
 	    /* notify to target cpu */
 	    tcs = qemu_get_cpu(target);
+	    if (tcs == NULL) {
+		/* target dos not exists; ignore */
+		break;
+	    }
+	    g_assert(tcs != 0);
 	    tenv = cpu_env(tcs);
 
 	    /* XXX - how can I notify trap to other cpu? */
-	    qemu_log(
-"cpu:%d sta ASI_SWVR_UDB_INTR_W: ivecno:0x%x => cpu:%d ivec:%lx pst:0x%x hpst:0x%lx tl:%d\n",
+	    qemu_log_mask(CPU_LOG_INT,
+		"cpu:%d sta ASI_SWVR_UDB_INTR_W: ivecno:0x%x "
+		"=> cpu:%d ivec:%lx pst:0x%x hpst:0x%lx tl:%d\n",
+
 		env_cpu(env)->cpu_index, (int)val & 0x3f,
 		target, tenv->ivec_status, tenv->pstate, tenv->hpstate,
 		tenv->tl);
@@ -2112,7 +2121,8 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
 	int	tt;
 	int	ix;
 
-	qemu_log("cpu:%d sta ASI_QUEUE: addr:%lx (%d), val:%lx\n",
+	qemu_log_mask(CPU_LOG_INT,
+	    "cpu:%d sta ASI_QUEUE: addr:%lx (%d), val:%lx\n",
 	    cs->cpu_index, addr, (int)((addr - 0x3c0) / 8), val);
 
 	switch (addr) {
