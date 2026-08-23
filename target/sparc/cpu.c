@@ -89,24 +89,38 @@ static bool sparc_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 {
     if (interrupt_request & CPU_INTERRUPT_HARD) {
         CPUSPARCState *env = cpu_env(cs);
-#if 1 /* BUG sun4v */
-	/* restart potentially paused strand */
-	cs->halted = 0;
 
-        if (env->interrupt_index == TT_IVEC
+#if 1 /* BUG sun4v */
+	/* ensure resume potentially paused strand */
+	cs->halted = 0;
+	cpu_reset_interrupt(cs, CPU_INTERRUPT_HALT);
+
+	/* clear CPU_INTERRUPT_HARD */
+        cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
+
+	qemu_log_mask(CPU_LOG_INT,
+	"cpu:%d %s:  ivec:%lx intr_index:0x%x tl:%d pc:%lx psrpil:0x%x pil_in:%x soft:%x\n",
+		cs->cpu_index, __func__, env->ivec_status,
+		env->interrupt_index,
+		env->tl, env->pc, env->psrpil, env->pil_in, env->softint);
+
+	/* TT_IVEC is not maskable for niagara 1 */
+        if (env->ivec_status != 0
 #ifdef IVEC_MASKABLE
             && cpu_interrupts_enabled(env)
 #endif
 	) {
-	    /* TT_IVEC is not maskable for niagara 1 */
+            env->interrupt_index = TT_IVEC;
+            cs->exception_index = env->interrupt_index;
+
 	    qemu_log_mask(CPU_LOG_INT,
-		"%s: cpu %d: ivec:%lx intr_index:0x%x tl:%d\n",
-		__func__, cs->cpu_index, env->ivec_status, env->interrupt_index,
+		"cpu:%d %s:  ivec:%lx intr_index:0x%x tl:%d\n",
+		cs->cpu_index, __func__, env->ivec_status,
+		env->interrupt_index,
 		env->tl);
 
-                cs->exception_index = env->interrupt_index;
-                sparc_cpu_do_interrupt(cs);
-                return true;
+            sparc_cpu_do_interrupt(cs);
+            return true;
 	}
 
 	if (cpu_hypervisor_mode(env)) {
@@ -115,6 +129,76 @@ static bool sparc_cpu_exec_interrupt(CPUState *cs, int interrupt_request)
 	     */
     	    return false;
 	}
+
+#ifdef CONF_MP_INTR
+	if (cpu_interrupts_enabled(env)) {
+	    int	tt;
+
+	    tt = 0;
+	    if (env->int_queue[0] != env->int_queue[1]) {
+                tt = TT_CPU_MONDO;
+	    }
+	    else if (env->int_queue[2] != env->int_queue[3]) {
+                tt = TT_DEV_MONDO;
+	    }
+	    else if (env->int_queue[4] != env->int_queue[5]) {
+                tt = TT_RESUMABLE_ERROR;
+	    }
+	    else {
+		uint32_t	pilreq;
+		int		i;
+
+	        pilreq =  env->pil_in |
+		    (env->softint & ~(SOFTINT_TIMER | SOFTINT_STIMER));
+
+	        if (env->softint & (SOFTINT_TIMER | SOFTINT_STIMER)) {
+		    pilreq = 1 << 14;
+	        }
+#if 0	/* fast version */
+		i = 0;
+		if (pilreq != 0) {
+		    int	x;
+		    int	n;
+
+		    i = 8;
+		    n = 4;
+		    while ((x = (pilreq >> i)) != 1) {
+			if (x == 0) {
+			    i -= n;
+			} else {
+			    i += n;
+			}
+			n >>= 1;
+		    }
+		}
+#else
+		for (i = 15; i >= 1; i--) {
+		    if (pilreq & (1 << i)) {
+			break;
+		    }
+		}
+#endif
+		if (i > env->psrpil) {
+                    tt = TT_EXTINT | i;
+		}
+	    }
+
+	    if (tt) {
+
+                env->interrupt_index = tt;
+                cs->exception_index = env->interrupt_index;
+
+	        qemu_log_mask(CPU_LOG_INT,
+		    "cpu:%d %s:  ivec:%lx intr_index:0x%x tl:%d\n",
+		    cs->cpu_index, __func__, env->ivec_status,
+		    env->interrupt_index,
+		    env->tl);
+
+                sparc_cpu_do_interrupt(cs);
+                return true;
+	    }
+	} else
+#endif /* CONF_MP_INTR */
 #endif /* sun4v */
         if (cpu_interrupts_enabled(env) && env->interrupt_index > 0) {
             int pil = env->interrupt_index & 0xf;
@@ -655,9 +739,13 @@ static void sparc_cpu_dump_state(CPUState *cs, FILE *f, int flags)
 {
     CPUSPARCState *env = cpu_env(cs);
     int i, x;
-
+#if 1 /* sun4v */
+    qemu_fprintf(f, "cpu:%d pc: " TARGET_FMT_lx "  npc: " TARGET_FMT_lx "\n",
+		 cs->cpu_index, env->pc, env->npc);
+#else
     qemu_fprintf(f, "pc: " TARGET_FMT_lx "  npc: " TARGET_FMT_lx "\n", env->pc,
                  env->npc);
+#endif
 
     for (i = 0; i < 8; i++) {
         if (i % REGS_PER_LINE == 0) {
@@ -817,11 +905,6 @@ static bool sparc_cpu_has_work(CPUState *cs)
 {
 #if 1 /* BUG sun4v */
     if (cpu_has_hypervisor(cpu_env(cs))) {
-	/* test pseudo interrupt to wakeup strand */
-        if (cpu_test_interrupt(cs, CPU_INTERRUPT_TGT_EXT_0)) {
-            cpu_reset_interrupt(cs, CPU_INTERRUPT_TGT_EXT_0);
-	    return (true);
-        }
         /* XXX: Is masking interrupts required for sun4v ? */
         return (cpu_test_interrupt(cs, CPU_INTERRUPT_HARD));
     }

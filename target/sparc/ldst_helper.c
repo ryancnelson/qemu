@@ -1560,10 +1560,8 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
 #if 1 /* BUG fix sun4v */
     case ASI_SWVR_UDB_INTR_R: /* Incoming Vector, RO 0x74 */
         {
-	    int	i;
-
 	    qemu_log_mask(CPU_LOG_INT,
-		"cpu:%d sta ASI_SWVR_UDB_INTR_R: ivec:0x%lx intr_index:0x%x tl:%d\n",
+		"cpu:%d lda ASI_SWVR_UDB_INTR_R: ivec:0x%lx intr_index:0x%x tl:%d\n",
 		env_cpu(env)->cpu_index, env->ivec_status, env->interrupt_index,
 		env->tl);
 
@@ -1574,43 +1572,53 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
 		break;
 	    }
 
-	    i = 63;
-#if 0
+#ifndef CONF_MP_INTR
+	    bql_lock();
+#endif
+	/* find most significant bit position */
+#if 1	/* fast version */
 {
-	    int64_t msb_mask;
+	    uint64_t	v;
+	    uint64_t	x;
+	    uint64_t	n;
 
-	    msb_mask = 0xffffffff00000000ULL;
-	    mask_shift = 32;
-	    while ((env->ivec_status & msb_mask) == 0 && (~msb_mask != 0)) {
-		i -= mask_shift;
-
-		mask_shift >>= 1;
-		msb_mask >>= mask_shift;
+	    v = env->ivec_status;
+	    ret = 32;
+	    n = 16;
+	    while ((x = (v >> ret)) != 1) {
+	        if (x == 0) {
+		    ret -= n;
+		} else {
+		    ret += n;
+		}
+		n >>= 1;
 	    }
 }
-#endif
-	    bql_lock();
-	    for (; i >= 0; i--) {
-		if (env->ivec_status & (1UL << i)) {
-		    /* clear the found bit */
-		    env->ivec_status &= ~(1UL << i);
-		    ret = i;
-
-		    /* deassert vector interrupt request */
-		    if (env->ivec_status == 0) {
-			/*
-			 * Update send interrupt request to target
-			 * cpu_check_irqs() implies deassert CPU_INTERRUPT_HARD
-			 */
-			cpu_check_irqs(env);
-		    }
+#else
+	    for (ret = 63; ret >= 0; ret--) {
+		if (env->ivec_status & (1UL << ret)) {
 		    break;
 		}
 	    }
+#endif /* fast  version */
+	    /* clear the found bit */
+	    qatomic_and(&env->ivec_status, ~(1UL << ret));
+#ifndef CONF_MP_INTR
+	    /* deassert vector interrupt request */
+	    if (env->ivec_status == 0) {
+		/*
+		 * Update send interrupt request to target
+		 * cpu_check_irqs() implies deassert CPU_INTERRUPT_HARD
+		 */
+		cpu_check_irqs(env);
+	    }
+#endif
+#ifndef CONF_MP_INTR
 	    bql_unlock();
+#endif
             break;
         }
-#endif
+#endif /* 1 */
     case ASI_SCRATCHPAD: /* UA2005 privileged scratchpad */
         if (unlikely((addr >= 0x20) && (addr < 0x30))) {
             /* Hyperprivileged access only */
@@ -1936,7 +1944,7 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
         demap_tlb(env->itlb, addr, "immu", env);
         return;
 #if 1 /* BUG fix sun4v */
-    case ASI_SWVR_UDB_INTR_W: /* Interrupt Vector Dispatch Register WO 0x73*/
+    case ASI_SWVR_UDB_INTR_W: /* Interrupt Vector Dispatch Register WO 0x73 */
         {
 	    uint32_t	target;
 	    CPUState	*tcs;
@@ -1962,37 +1970,24 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
 		target, tenv->ivec_status, tenv->pstate, tenv->hpstate,
 		tenv->tl);
 
-	    //qatomic_or(&tenv->ivec_status, 1UL << (val & 0x3f));
-#if 1
-	    //mondo_deliver_vecintr(tcs);
-
 	    /* update interrupt requests */
-	    //if (cpu_interrupts_enabled(tenv)) {
-	        bql_lock();
-	        qatomic_or(&tenv->ivec_status, 1UL << (val & 0x3f));
-	        cpu_check_irqs(tenv);
-	        if (tenv->interrupt_index) {
-
-		    /* XXX cpu_check_irqs()  should implies */
-		    if (cpu_test_interrupt(tcs, CPU_INTERRUPT_HARD) == 0) {
-		         cpu_interrupt(tcs, CPU_INTERRUPT_HARD);
-		    }
-#if 1
-		    tcs->halted = 0;
-		    if (cpu_test_interrupt(tcs, CPU_INTERRUPT_HALT)) {
-		        cpu_reset_interrupt(tcs, CPU_INTERRUPT_HALT);
-		    }
+#ifndef CONF_MP_INTR
+	    bql_lock();
 #endif
-		    cpu_interrupt(tcs, CPU_INTERRUPT_TGT_EXT_0);
-		    qemu_cpu_kick(tcs);
-	        } else {
-		    /* deassert interrupt */
-		    if (cpu_test_interrupt(tcs, CPU_INTERRUPT_HARD)) {
-		        cpu_reset_interrupt(tcs, CPU_INTERRUPT_HARD);
-		    }
-		}
-	        bql_unlock();
-	    //}
+	    if (qatomic_fetch_or(&tenv->ivec_status, 1UL << (val & 0x3f))
+		== 0) {
+	        /* wakeup potentially halted strand */
+#ifndef CONF_MP_INTR
+	        cpu_check_irqs(env); /* XXX untested */
+#else
+	        cpu_set_interrupt(tcs, CPU_INTERRUPT_HARD);
+#endif
+#if 1 /* ndef CONF_MP_INTR  mandatory */
+	        qemu_cpu_kick(tcs);
+#endif
+	    }
+#ifndef CONF_MP_INTR
+	    bql_unlock();
 #endif
             break;
         }
@@ -2151,16 +2146,25 @@ void helper_st_asi(CPUSPARCState *env, target_ulong addr, target_ulong val,
             sparc_raise_mmu_fault(cs, addr, true, false, 1, size, GETPC());
 	    return;
 	}
-	ix = (addr - 0x3c0) / 8;
 
+	ix = (addr - 0x3c0) / 8;
 	env->int_queue[ix] = val;
 
-        if (tt) {
+        if (tt && env->int_queue[ix & ~1] != env->int_queue[ix | 1]) {
 	    /* need to update interrupt */
 	    if (cpu_interrupts_enabled(env)) {
+#ifndef CONF_MP_INTR
 		bql_lock();
 		cpu_check_irqs(env);
 		bql_unlock();
+#else
+		cpu_set_interrupt(cs, CPU_INTERRUPT_HARD);
+#if 1
+	        env->pc = env->npc;
+	        env->npc = env->pc + 4;
+		cpu_loop_exit_noexc(cs);
+#endif
+#endif
 	    }
 	}
         return;

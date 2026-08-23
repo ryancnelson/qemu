@@ -679,35 +679,28 @@ static void sun4v_iob_write(void *opaque, hwaddr addr,
 	case 2: /* idle */
 	    //bql_lock();
 
-	    /* clear pended wakeup request */
-	    cpu_reset_interrupt(tcs, CPU_INTERRUPT_TGT_EXT_0);
 
 	    /* make target halted*/
-	    tcs->halted = 1;
-	    cpu_interrupt(tcs, CPU_INTERRUPT_HALT);
+	    //tcs->halted = 1;
+	    cpu_set_interrupt(tcs, CPU_INTERRUPT_HALT);
 
 	    //bql_unlock();
-
+#if 1 /* ndef CONF_MP_INTR mandatory */
 	    qemu_cpu_kick(tcs); /* mandatory */
-
+#endif
 	    break;
 
 	case 3: /* resume */
-	    //qemu_get_cpu(cpu)->halted = 1;	/* still stop */
 	    //tcs->halted = 0;	/* run  mandatory */
 
-	    //bql_lock();
-
-	    cpu_reset_interrupt(tcs, CPU_INTERRUPT_HALT);
-
 	    /* private interrupt to wake up target */
-	    tcs->halted = 0;
-	    cpu_interrupt(tcs, CPU_INTERRUPT_TGT_EXT_0);
+	    //tcs->halted = 0;
+	    cpu_set_interrupt(tcs, CPU_INTERRUPT_HARD);
 
 	    //bql_unlock();
-
+#if 1 /* ndef CONF_MP_INTR mandatory */
 	    qemu_cpu_kick(tcs); /* mandatory */
-
+#endif
 	    break;
 	}
 	break;

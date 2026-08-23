@@ -741,6 +741,7 @@ x:
 #endif /* NEW_VDISK */
 
 #if !defined(CONFIG_USER_ONLY)
+#ifndef CONF_MP_INTR
 void cpu_check_irqs(CPUSPARCState *env)
 {
 #if 1 /* BUG sun4v */
@@ -753,9 +754,10 @@ void cpu_check_irqs(CPUSPARCState *env)
 #if 1 /* BUG sun4v */
     int int_hard_pended = cpu_test_interrupt(cs, CPU_INTERRUPT_HARD);
 #endif
+#ifndef CONF_MP_INTR
     /* We should be holding the BQL before we mess with IRQs */
     g_assert(bql_locked());
-
+#endif
     /* TT_IVEC has a higher priority (16) than TT_EXTINT (31..17) */
 #if 1 /* BUG fix sun4v */
     if (cpu_has_hypervisor(env)) {
@@ -808,10 +810,10 @@ void cpu_check_irqs(CPUSPARCState *env)
         }
     } else
 #endif
+    /* TT_IVEC has a higher priority (16) than TT_EXTINT (31..17) */
     if (env->ivec_status & 0x20) {
         return;
     }
-
     cs = env_cpu(env);
     /*
      * check if TM or SM in SOFTINT are set
@@ -864,6 +866,7 @@ void cpu_check_irqs(CPUSPARCState *env)
         cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
     }
 }
+#endif /* !CONF_MP_INTR */
 #endif
 
 void sparc_cpu_do_interrupt(CPUState *cs)
@@ -913,8 +916,12 @@ void sparc_cpu_do_interrupt(CPUState *cs)
                 name = "Unknown";
             }
         }
-
+#if 1	/* sun4v */
+        qemu_log("cpu:%d %6d: %s (v=%04x)\n",
+	    cs->cpu_index, count, name, intno);
+#else
         qemu_log("%6d: %s (v=%04x)\n", count, name, intno);
+#endif
         log_cpu_state(cs, 0);
 #if 0
         {
@@ -996,6 +1003,7 @@ void sparc_cpu_do_interrupt(CPUState *cs)
 
 	    /* XXX: workaround against repeating II_IVEC */
 #ifndef IVEC_MASKABLE
+	    /* XXX doesnt work yet*/
 	    cpu_reset_interrupt(cs, CPU_INTERRUPT_HARD);
 #endif
 	}
@@ -1071,9 +1079,13 @@ static bool do_modify_softint(CPUSPARCState *env, uint32_t value)
         env->softint = value;
 #if !defined(CONFIG_USER_ONLY)
         if (cpu_interrupts_enabled(env)) {
+#ifndef CONF_MP_INTR
             bql_lock();
             cpu_check_irqs(env);
             bql_unlock();
+#else
+	    cpu_set_interrupt(env_cpu(env), CPU_INTERRUPT_HARD);
+#endif
         }
 #endif
         return true;

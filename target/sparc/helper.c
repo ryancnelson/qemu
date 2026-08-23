@@ -254,29 +254,16 @@ void helper_wrssr(CPUSPARCState *env, target_ulong new)
 	    cs->cpu_index, __func__,
 	    env->pstate, env->hpstate, env->tl);
 	//qatomic_or(&env->ssr, 1ULL);
-#if 0
-	bql_lock();
-#endif
-	/* we move to halt status after this instruction
-	 * until something happen to execute
-	 */
 
 	/*
-	 * XXX: To avoild deadlock, ensure no pended asynchronous
-	 * interrupts.
+	 * we move to halt status until something happen to execute.
 	 */
-#if 0	/* still hang */
-	if (!env->ivec_status &&
-            !((env->int_queue[0] ^ env->int_queue[1]) & 0x3fc0) &&
-            !((env->int_queue[2] ^ env->int_queue[3]) & 0x3fc0) &&
-            !((env->int_queue[4] ^ env->int_queue[5]) & 0x3fc0) &&
-	    !env->softint && !env->pil_in) {
-		cs->halted = 1;
-	}
-#endif
 #if 0
-	cpu_interrupt(cs, CPU_INTERRUPT_HALT);
-	bql_unlock();
+	/* XXX: too slow. it cause xt_sync timeout */
+	 cpu_interrupt(cs, CPU_INTERRUPT_HALT);
+#else
+	/* we should avoid vcpu thread context switching ? */
+	cs->halted = 1;
 #endif
     }
 #if 0

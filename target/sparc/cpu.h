@@ -828,4 +828,6 @@ static inline uint64_t sparc64_tstate(CPUSPARCState *env)
 }
 #endif
 
+//#define	CONF_INTR_NOLOCK
+#define	CONF_MP_INTR
 #endif

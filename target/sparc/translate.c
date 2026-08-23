@@ -3647,6 +3647,7 @@ TRANS(WRPR_gl, GL, do_wr_special, a, supervisor(dc), do_wrgl)
 #if 1 /* BUG sun4v */
 static void do_wrssr(DisasContext *dc, TCGv src)
 {
+    dc->base.is_jmp = DISAS_EXIT;
     gen_helper_wrssr(tcg_env, src);
 }
 
@@ -3655,7 +3656,6 @@ TRANS(WRSSR, HYPV, do_wr_special, a, hypervisor(dc), do_wrssr)
 static void do_wrssr(DisasContext *dc, TCGv src)
 {
     tcg_gen_st_tl(src, tcg_env, env64_field_offsetof(ssr));
-    dc->base.is_jmp = DISAS_EXIT;
 }
 
 TRANS(WRPR_strand_status, HYPV, do_wr_special, a, hypervisor(dc), do_wrssr)

@@ -23,6 +23,8 @@
 #include "exec/helper-proto.h"
 #include "trace.h"
 
+#include "exec/cpu-common.h"
+
 void cpu_set_cwp(CPUSPARCState *env, int new_cwp)
 {
     /* put the modified wrap registers at their proper location */
@@ -100,7 +102,11 @@ void cpu_put_psr(CPUSPARCState *env, target_ulong val)
 {
     cpu_put_psr_raw(env, val);
 #if ((!defined(TARGET_SPARC64)) && !defined(CONFIG_USER_ONLY))
+#ifndef CONF_MP_INTR
     cpu_check_irqs(env);
+#else
+    cpu_set_interrupt(env_cpu(env), CPU_INTERRUPT_HARD);
+#endif /* CONF_MP_INTR */
 #endif
 }
 
@@ -396,9 +402,13 @@ void helper_wrpstate(CPUSPARCState *env, target_ulong new_state)
 
 #if !defined(CONFIG_USER_ONLY)
     if (cpu_interrupts_enabled(env)) {
+#ifndef CONF_MP_INTR
         bql_lock();
         cpu_check_irqs(env);
         bql_unlock();
+#else
+        cpu_set_interrupt(env_cpu(env), CPU_INTERRUPT_HARD);
+#endif
     }
 #endif
 }
@@ -411,9 +421,13 @@ void helper_wrpil(CPUSPARCState *env, target_ulong new_pil)
     env->psrpil = new_pil;
 
     if (cpu_interrupts_enabled(env)) {
+#ifndef CONF_MP_INTR
         bql_lock();
         cpu_check_irqs(env);
         bql_unlock();
+#else
+        cpu_set_interrupt(env_cpu(env), CPU_INTERRUPT_HARD);
+#endif
     }
 #endif
 }
@@ -440,9 +454,13 @@ void helper_done(CPUSPARCState *env)
 
 #if !defined(CONFIG_USER_ONLY)
     if (cpu_interrupts_enabled(env)) {
+#ifndef CONF_MP_INTR
         bql_lock();
         cpu_check_irqs(env);
         bql_unlock();
+#else
+        cpu_set_interrupt(env_cpu(env), CPU_INTERRUPT_HARD);
+#endif
     }
 #endif
 }
@@ -469,9 +487,13 @@ void helper_retry(CPUSPARCState *env)
 
 #if !defined(CONFIG_USER_ONLY)
     if (cpu_interrupts_enabled(env)) {
+#ifndef CONF_MP_INTR
         bql_lock();
         cpu_check_irqs(env);
         bql_unlock();
+#else
+        cpu_set_interrupt(env_cpu(env), CPU_INTERRUPT_HARD);
+#endif
     }
 #endif
 }

@@ -53,17 +53,23 @@ static void cpu_kick_irq(SPARCCPU *cpu)
         cpu_reset_interrupt(cs, CPU_INTERRUPT_HALT);
     }
 #endif
-    cs->halted = 0;
 
-    /* make cpu acknowledge softint */
+#ifndef CONF_MP_INTR
+    //cs->halted = 0;
     cpu_check_irqs(env);
+#else
+    /* make cpu acknowledge softint */
+    cpu_set_interrupt(env_cpu(env), CPU_INTERRUPT_HARD);
+#endif
 #if 1
     qemu_log_mask(CPU_LOG_INT,
-	"cpu:%d %s softint:0x%x intr_ix:0x%x pil:%d, pst:%x hpst:%lx\n",
+	"cpu:%d %s softint:0x%x intr_ix:0x%x pil:%d, pst:%x hpst:%lx locked:%d\n",
 	cs->cpu_index, __func__, env->softint, env->interrupt_index,
-	env->psrpil, env->pstate, env->hpstate);
+	env->psrpil, env->pstate, env->hpstate, bql_locked());
 #endif
+#if 1 /* ndef CONF_MP_INTR mandatory */
     qemu_cpu_kick(cs);
+#endif
 }
 
 void sparc64_cpu_set_ivec_irq(void *opaque, int irq, int level)
@@ -234,8 +240,11 @@ static void tick_irq(void *opaque)
     } else {
         trace_sparc64_cpu_tick_irq_fire();
     }
-
+#if 1 /* sum4v */
+    qatomic_or(&env->softint, SOFTINT_TIMER);
+#else
     env->softint |= SOFTINT_TIMER;
+#endif
     cpu_kick_irq(cpu);
 }
 
@@ -261,7 +270,11 @@ static void stick_irq(void *opaque)
         trace_sparc64_cpu_stick_irq_fire();
     }
 
+#if 1 /* sun4v */
+    qatomic_or(&env->softint, SOFTINT_STIMER);
+#else
     env->softint |= SOFTINT_STIMER;
+#endif
     cpu_kick_irq(cpu);
 }
 
@@ -286,7 +299,11 @@ static void hstick_irq(void *opaque)
         trace_sparc64_cpu_hstick_irq_fire();
     }
 
+#if 1 /* sun4v */
+    qatomic_or(&env->softint, SOFTINT_STIMER);
+#else
     env->softint |= SOFTINT_STIMER;
+#endif
     cpu_kick_irq(cpu);
 }
 
