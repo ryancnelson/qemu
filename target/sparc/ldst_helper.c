@@ -129,7 +129,7 @@ static void replace_tlb_entry(SparcTLBEntry *tlb,
                               uint64_t tlb_tag, uint64_t tlb_tte,
                               CPUSPARCState *env)
 {
-    target_ulong mask, size, va, offset;
+    target_ulong mask, size, va;
 
     /* flush page range if translation is valid */
     if (TTE_IS_VALID(tlb->tte)) {
@@ -140,9 +140,16 @@ static void replace_tlb_entry(SparcTLBEntry *tlb,
 
         va = tlb->tag & mask;
 
-        for (offset = 0; offset < size; offset += TARGET_PAGE_SIZE) {
-            tlb_flush_page(cs, va + offset);
-        }
+        /*
+         * Flush the complete mapping as one range.  In particular, avoid
+         * taking the TCG TLB lock and scanning the victim table once for
+         * every 8 KiB page in a large SPARC TTE.  The range helper retains
+         * page-granular behavior for small mappings and selects a single
+         * full flush when that is cheaper than walking the range.
+         */
+        tlb_flush_range_by_mmuidx(cs, va, size,
+                                  (1U << (MMU_PHYS_IDX + 1)) - 1,
+                                  TARGET_LONG_BITS);
     }
 
     tlb->tag = tlb_tag;
