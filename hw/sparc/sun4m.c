@@ -154,6 +154,10 @@ static void nvram_init(Nvram *nvram, uint8_t *macaddr,
     uint8_t image[0x1ff0];
     NvramClass *k = NVRAM_GET_CLASS(nvram);
 
+    if (k->has_persistent_image && k->has_persistent_image(nvram)) {
+        return;
+    }
+
     memset(image, '\0', sizeof(image));
 
     /* OpenBIOS nvram variables partition */

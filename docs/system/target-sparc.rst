@@ -55,6 +55,16 @@ The number of peripherals is fixed in the architecture. Maximum memory
 size depends on the machine type, for SS-5 it is 256MB and for others
 2047MB.
 
+The M48T02/M48T08 NVRAM can be backed by a persistent file.  For example,
+an SS-5 uses an 8192-byte M48T08 image::
+
+  qemu-system-sparc -M SS-5 \
+    -global sysbus-m48t08.filename=ss5.nvram
+
+The file is created when it does not exist.  An existing file must exactly
+match the NVRAM device size.  Changes made by the firmware are written back
+to the image and are available on the next QEMU invocation.
+
 Since version 0.8.2, QEMU uses OpenBIOS https://www.openbios.org/.
 OpenBIOS is a free (GPL v2) portable firmware implementation. The goal
 is to implement a 100% IEEE 1275-1994 (referred to as Open Firmware)

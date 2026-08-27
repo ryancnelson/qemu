@@ -45,6 +45,7 @@ struct NvramClass {
     uint32_t (*read)(Nvram *obj, uint32_t addr);
     void (*write)(Nvram *obj, uint32_t addr, uint32_t val);
     void (*toggle_lock)(Nvram *obj, int lock);
+    bool (*has_persistent_image)(Nvram *obj);
 };
 
 #endif /* HW_RTC_M48T59_H */
