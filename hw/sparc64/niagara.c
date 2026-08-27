@@ -96,6 +96,18 @@ typedef struct NiagaraBoardState {
 #define NIAGARA_NVRAM_BASE  0x1f11000000ULL
 #define NIAGARA_NVRAM_SIZE  0x2000
 
+#define TYPE_NIAGARA_MACHINE MACHINE_TYPE_NAME("niagara")
+OBJECT_DECLARE_SIMPLE_TYPE(NiagaraMachineState, NIAGARA_MACHINE)
+
+struct NiagaraMachineState {
+    MachineState parent_obj;
+    char *nvram_file;
+};
+
+static char *niagara_get_nvram_file(Object *obj, Error **errp);
+static void niagara_set_nvram_file(Object *obj, const char *value,
+                                   Error **errp);
+
 #define NIAGARA_MD_ROM_BASE 0x1f12000000ULL
 //#define NIAGARA_MD_ROM_SIZE 0x2000
 #define NIAGARA_MD_ROM_SIZE 0x4000
@@ -771,6 +783,7 @@ type_init(sun4v_iob_register_types)
 /* Niagara hardware initialisation */
 static void niagara_init(MachineState *machine)
 {
+    NiagaraMachineState *nms = NIAGARA_MACHINE(machine);
     NiagaraBoardState *s = g_new(NiagaraBoardState, 1);
 #ifdef NEW_VDISK
     DriveInfo *dinfo_vdisk = drive_get(IF_NONE, VDISK_BUS_ID, VDISK_UNIT_BASE);
@@ -808,8 +821,32 @@ static void niagara_init(MachineState *machine)
     memory_region_add_subregion(sysmem, NIAGARA_PARTITION_RAM_BASE,
                                 machine->ram);
 
-    memory_region_init_ram(&s->nvram, NULL, "sun4v.nvram", NIAGARA_NVRAM_SIZE,
-                           &error_fatal);
+    if (nms->nvram_file) {
+        struct stat st;
+
+        if (g_stat(nms->nvram_file, &st) < 0) {
+            error_report("cannot stat Niagara NVRAM image '%s': %s",
+                         nms->nvram_file, strerror(errno));
+            exit(1);
+        }
+        if (!S_ISREG(st.st_mode) || st.st_size != NIAGARA_NVRAM_SIZE) {
+            error_report("Niagara NVRAM image '%s' must be a regular file "
+                         "of exactly %u bytes", nms->nvram_file,
+                         NIAGARA_NVRAM_SIZE);
+            exit(1);
+        }
+        if (access(nms->nvram_file, R_OK | W_OK) < 0) {
+            error_report("Niagara NVRAM image '%s' must be readable and "
+                         "writable: %s", nms->nvram_file, strerror(errno));
+            exit(1);
+        }
+        memory_region_init_ram_from_file(&s->nvram, NULL, "sun4v.nvram",
+                                         NIAGARA_NVRAM_SIZE, 0, RAM_SHARED,
+                                         nms->nvram_file, 0, &error_fatal);
+    } else {
+        memory_region_init_ram(&s->nvram, NULL, "sun4v.nvram",
+                               NIAGARA_NVRAM_SIZE, &error_fatal);
+    }
     memory_region_add_subregion(sysmem, NIAGARA_NVRAM_BASE, &s->nvram);
     memory_region_init_ram(&s->md_rom, NULL, "sun4v-md.rom",
                            NIAGARA_MD_ROM_SIZE, &error_fatal);
@@ -821,7 +858,9 @@ static void niagara_init(MachineState *machine)
                            &error_fatal);
     memory_region_add_subregion(sysmem, NIAGARA_PROM_BASE, &s->prom);
 
-    add_rom_or_fail("nvram1", NIAGARA_NVRAM_BASE);
+    if (!nms->nvram_file) {
+        add_rom_or_fail("nvram1", NIAGARA_NVRAM_BASE);
+    }
 #if 0
     add_rom_or_fail("1up-md.bin", NIAGARA_MD_ROM_BASE);
     add_rom_or_fail("1up-hv.bin", NIAGARA_HV_ROM_BASE);
@@ -913,11 +952,38 @@ static void niagara_class_init(ObjectClass *oc, const void *data)
     mc->default_boot_order = "c";
     mc->default_cpu_type = SPARC_CPU_TYPE_NAME("Sun-UltraSparc-T1");
     mc->default_ram_id = "sun4v-partition.ram";
+    object_class_property_add_str(oc, "nvram-file",
+                                  niagara_get_nvram_file,
+                                  niagara_set_nvram_file);
+}
+
+static char *niagara_get_nvram_file(Object *obj, Error **errp)
+{
+    NiagaraMachineState *nms = NIAGARA_MACHINE(obj);
+
+    return g_strdup(nms->nvram_file);
+}
+
+static void niagara_set_nvram_file(Object *obj, const char *value, Error **errp)
+{
+    NiagaraMachineState *nms = NIAGARA_MACHINE(obj);
+
+    g_free(nms->nvram_file);
+    nms->nvram_file = g_strdup(value);
+}
+
+static void niagara_finalize(Object *obj)
+{
+    NiagaraMachineState *nms = NIAGARA_MACHINE(obj);
+
+    g_free(nms->nvram_file);
 }
 
 static const TypeInfo niagara_type = {
-    .name = MACHINE_TYPE_NAME("niagara"),
+    .name = TYPE_NIAGARA_MACHINE,
     .parent = TYPE_MACHINE,
+    .instance_size = sizeof(NiagaraMachineState),
+    .instance_finalize = niagara_finalize,
     .class_init = niagara_class_init,
 };
 
